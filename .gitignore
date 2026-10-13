@@ -1,0 +1,28 @@
+# Installed and generated
+node_modules
+.wrangler/
+*.log
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# This campaign's own settings. Each has a committed *.example copy.
+# (no leading slash, so copies in any subfolder are ignored too)
+site-config.js
+!site-config.example.js
+wrangler.jsonc
+.firebaserc
+.deploy.env
+
+# Map images are usually copyrighted: keep yours local. Only the example is committed.
+public/map/*
+!public/map/example-map.png
+
+# Archives, such as release zips, may contain all of the above.
+*.zip
+*.tar
+*.tgz
+
+# Backups contain DM-only text and member emails. Never commit them.
+*backup*.json
+*before-restore*.json

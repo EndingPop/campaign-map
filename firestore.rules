@@ -1,0 +1,123 @@
+rules_version = '2';
+
+// Access model (see the development spec):
+//   admin, dm - everything: pins, waypoints, pin types, DM-only text, any
+//               note, members, map settings, and writing notes under their
+//               original authors when restoring a backup. The two roles have
+//               the same powers; the names only show who is who.
+//   player - reads revealed pins, the route and all notes on revealed pins;
+//            writes only their own notes (incl. leads and people met), and
+//            may mark any visible lead open or done
+// Anyone signed in but not listed in /members gets nothing.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function email() { return request.auth.token.email.lower(); }
+    function memberPath() { return /databases/$(database)/documents/members/$(email()); }
+    function member() { return signedIn() && exists(memberPath()); }
+    function role() { return get(memberPath()).data.role; }
+    // The DM has full admin powers, so both checks accept both roles.
+    function isAdmin() { return member() && role() in ['admin', 'dm']; }
+    function isDM() { return member() && role() in ['dm', 'admin']; }
+
+    function isShortString(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function isOptString(v, max) { return v == null || (v is string && v.size() <= max); }
+
+    match /members/{memberEmail} {
+      // Members read the whole list (for names on notes). Anyone signed in
+      // may read their own entry, so the app can tell a non-member why.
+      allow read: if member() || (signedIn() && memberEmail == email());
+      allow write: if isAdmin()
+        && (request.method == 'delete'
+            || (request.resource.data.role in ['admin', 'dm', 'player']
+                && memberEmail == memberEmail.lower()));
+    }
+
+    match /settings/{docId} {
+      allow read: if member();
+      allow write: if isAdmin();
+    }
+
+    match /pinTypes/{typeId} {
+      allow read: if member();
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.label, 60)
+        && request.resource.data.kind in ['base', 'ring']
+        && isShortString(request.resource.data.color, 30);
+    }
+
+    match /pins/{pinId} {
+      allow read: if isDM() || (member() && resource.data.visibility == 'public');
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.name, 100)
+        && request.resource.data.x is number
+        && request.resource.data.y is number
+        && request.resource.data.baseType is string
+        && request.resource.data.rings is list
+        && request.resource.data.visibility in ['public', 'hidden']
+        && isOptString(request.resource.data.get('description', null), 5000);
+
+      match /dm/{docId} {
+        allow read, write: if isDM();
+      }
+
+      // Entries on a pin. `kind` (optional, default 'note'):
+      //   note - free text
+      //   lead - a lead or rumor; `status` 'open' or 'done'
+      //   npc  - a person met there; `name` plus text
+      match /notes/{noteId} {
+        function pinIsPublic() {
+          return get(/databases/$(database)/documents/pins/$(pinId)).data.visibility == 'public';
+        }
+        function noteShape() {
+          return request.resource.data.keys().hasOnly(['text', 'authorEmail', 'authorName', 'createdAt', 'updatedAt', 'kind', 'name', 'status'])
+            && isShortString(request.resource.data.text, 4000)
+            && isShortString(request.resource.data.authorEmail, 200)
+            && request.resource.data.get('kind', 'note') in ['note', 'lead', 'npc']
+            && isOptString(request.resource.data.get('name', null), 100)
+            && request.resource.data.get('status', 'open') in ['open', 'done'];
+        }
+        // Everyone writes only under their own email...
+        function validNote() {
+          return noteShape() && request.resource.data.authorEmail == email();
+        }
+        // ...except an admin or DM restoring a backup, which writes notes
+        // back under their original authors.
+        function adminRestore() {
+          return isAdmin() && noteShape();
+        }
+        // Anyone who can see a lead may mark it open or done; nothing else changes.
+        function statusOnlyOnLead() {
+          return resource.data.get('kind', 'note') == 'lead'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status in ['open', 'done'];
+        }
+        allow read: if isDM() || (member() && pinIsPublic());
+        allow create: if member() && (isDM() || pinIsPublic()) && (validNote() || adminRestore());
+        allow update: if member() && (isDM() || pinIsPublic())
+          && ((resource.data.authorEmail == email() && validNote()) || statusOnlyOnLead() || adminRestore());
+        allow delete: if isDM() || (member() && resource.data.authorEmail == email());
+      }
+    }
+
+    match /waypoints/{waypointId} {
+      allow read: if member();
+      allow delete: if isDM();
+      // `path` (optional): bend points along the road from the previous stop.
+      // `travel` (optional): how the party reached this stop, 'road' or 'teleport'.
+      allow create, update: if isDM()
+        && request.resource.data.seq is number
+        && request.resource.data.x is number
+        && request.resource.data.y is number
+        && (!('path' in request.resource.data)
+            || (request.resource.data.path is list && request.resource.data.path.size() <= 300))
+        && (!('travel' in request.resource.data)
+            || request.resource.data.travel in ['road', 'teleport']);
+    }
+  }
+}

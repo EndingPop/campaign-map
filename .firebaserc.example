@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "demo-map",
+    "dev": "your-dev-project-id",
+    "prod": "your-prod-project-id"
+  }
+}

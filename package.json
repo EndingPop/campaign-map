@@ -1,0 +1,36 @@
+{
+  "name": "campaign-map",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared tabletop campaign map: party route, typed pins, player notes, leads, distances. Static site on Cloudflare Workers with Firebase Auth and Firestore.",
+  "scripts": {
+    "emulators": "firebase emulators:start --project demo-map",
+    "serve": "node scripts/serve.mjs",
+    "seed": "node scripts/seed.mjs",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-map \"node --test tests/*.test.mjs\"",
+    "deploy:rules:dev": "firebase deploy --only firestore:rules --project dev",
+    "deploy:rules:prod": "firebase deploy --only firestore:rules --project prod",
+    "deploy:site:dev": "wrangler deploy --env dev",
+    "deploy:site:prod": "wrangler deploy --env=\"\"",
+    "vendor": "node scripts/vendor.mjs",
+    "deploy": "bash scripts/deploy.sh",
+    "check:public": "node scripts/check-public.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
+    "esbuild": "^0.25.0",
+    "firebase": "13.0.0",
+    "firebase-admin": "^13.0.0",
+    "firebase-tools": "15.33.0",
+    "leaflet": "1.9.4",
+    "wrangler": "^4.0.0"
+  },
+  "allowScripts": {
+    "@firebase/util": true,
+    "esbuild": true,
+    "protobufjs": true,
+    "re2": true,
+    "workerd": true
+  }
+}

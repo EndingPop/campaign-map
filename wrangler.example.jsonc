@@ -1,0 +1,32 @@
+// Cloudflare Workers settings. Copy to wrangler.jsonc (not committed) and set
+// your Worker name and production domain. The site is static files only (no
+// Worker code): Cloudflare serves everything in ./public.
+//
+//   npm run deploy:site:dev   -> Worker "<name>-dev" at https://<name>-dev.<your-subdomain>.workers.dev
+//                                (uses the dev Firebase project)
+//   npm run deploy:site:prod  -> Worker "<name>" at your custom domain
+//                                (uses the prod Firebase project)
+//
+// Protect both Workers with Cloudflare Access before sharing them (README).
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "campaign-map",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public"
+  },
+  // Production: only the custom domain. No workers.dev address, no preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "map.example.com", "custom_domain": true }
+  ],
+  "env": {
+    "dev": {
+      // Deployed as a separate Worker named "<name>-dev".
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": []
+    }
+  }
+}
