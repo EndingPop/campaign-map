@@ -38,14 +38,32 @@ export const TRAVEL_PACES = [
   { id: 'fast', label: 'Fast', milesPerDay: 30 },
 ];
 
-// Route line colors. A stop's `travel` says how the party reached it.
-// Teleport legs are drawn as an arc straight between the two stops.
-// teleport.inline is the wording used inside sentences ("By teleport").
+// Travel modes the DM's app creates on first sign-in when the database has
+// none. A stop's `travel` holds a mode id; stops without one count as
+// 'road'. More modes are added in the app (menu > Travel modes).
+//   line   'path': follows the bend points the DM clicks, smoothed
+//          'arc' : a curve straight from the previous stop
+//   dash   'dash' | 'dot' | 'solid'
+//   paces  miles a day at slow / normal / fast; leave any out. With none
+//          set, the leg has no distance or travel time (a teleport).
+//   revealed  players see the mode only once true; the DM's app sets it the
+//          first time a stop uses the mode.
+// The teleport wording comes from site-config.js (e.g. "Harper teleport").
 const teleport = site.TELEPORT || { label: 'Teleport', inline: 'teleport' };
-export const ROUTE_STYLES = {
-  road: { label: 'Party route', color: '#c9a227' },
-  teleport: { label: teleport.label, inline: teleport.inline || teleport.label, color: '#b07cff' },
-};
+export const STARTING_TRAVEL_MODES = [
+  { id: 'road', label: 'Party route', inline: 'road', color: '#c9a227', line: 'path', dash: 'dash',
+    paces: Object.fromEntries(TRAVEL_PACES.map((p) => [p.id, p.milesPerDay])), revealed: true, sortOrder: 1 },
+  { id: 'teleport', label: teleport.label, inline: teleport.inline || teleport.label, color: '#b07cff', line: 'arc', dash: 'dot',
+    paces: {}, revealed: false, sortOrder: 2 },
+];
+
+// What an NPC's status can be. The first is the default for a new NPC.
+export const NPC_STATUSES = [
+  { id: 'alive', label: 'Alive' },
+  { id: 'dead', label: 'Dead' },
+  { id: 'missing', label: 'Missing' },
+  { id: 'unknown', label: 'Unknown' },
+];
 
 // 'demo'  : ?demo in the URL. In-memory data, no sign-in, nothing saved.
 // 'local' : localhost, talks to the Firebase emulators.

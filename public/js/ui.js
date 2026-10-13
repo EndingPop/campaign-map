@@ -69,6 +69,34 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
         input.value = f.value ?? '';
       } else if (f.type === 'checkbox') {
         input = h('input', { id, name: f.name, type: 'checkbox', checked: !!f.value });
+      } else if (f.type === 'links') {
+        // Link list: tick an option to link it; "Hidden" keeps that link from
+        // players. value and result: { shown: [ids], hidden: [ids] }.
+        const v = f.value || { shown: [], hidden: [] };
+        const rows = f.options.map((o) => {
+          const linked = v.shown.includes(o.value) || v.hidden.includes(o.value);
+          const box = h('input', { type: 'checkbox', checked: linked, 'aria-label': `Link ${o.label}` });
+          const hide = h('input', { type: 'checkbox', checked: v.hidden.includes(o.value), disabled: !linked, 'aria-label': `Hide the ${o.label} link from players` });
+          box.addEventListener('change', () => { hide.disabled = !box.checked; if (!box.checked) hide.checked = false; });
+          const row = h('div', { class: 'link-row', 'data-value': o.value, 'data-label': o.label.toLowerCase() },
+            h('label', { class: 'check' }, box, o.swatch ? h('span', { class: 'swatch', html: o.swatch }) : null, o.label),
+            h('label', { class: 'check link-hidden' }, hide, 'Hidden'));
+          row.read = () => (box.checked ? (hide.checked ? 'hidden' : 'shown') : null);
+          return row;
+        });
+        // Linked options first, so the current links are visible without scrolling.
+        rows.sort((a, b) => (b.read() ? 1 : 0) - (a.read() ? 1 : 0));
+        const filter = f.options.length > 8 ? h('input', { type: 'search', placeholder: 'Filter', 'aria-label': `Filter ${f.label}`,
+          oninput: (e) => { const q = e.target.value.toLowerCase(); rows.forEach((r) => { r.hidden = !!q && !r.dataset.label.includes(q); }); } }) : null;
+        input = h('fieldset', { class: 'links' }, h('legend', {}, f.label), filter,
+          f.options.length ? h('div', { class: 'link-rows' }, rows) : null);
+        input.read = () => {
+          const out = { shown: [], hidden: [] };
+          rows.forEach((r) => { const st = r.read(); if (st) out[st].push(r.dataset.value); });
+          return out;
+        };
+        inputs[f.name] = input;
+        return h('div', { class: 'field' }, input, f.hint ? h('p', { class: 'hint' }, f.hint) : null);
       } else if (f.type === 'checklist') {
         input = h('fieldset', { class: 'checklist' }, h('legend', {}, f.label),
           f.options.map((o) => h('label', { class: 'check' },
@@ -93,6 +121,7 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
         const el = inputs[f.name];
         if (f.type === 'checkbox') out[f.name] = el.checked;
         else if (f.type === 'checklist') out[f.name] = [...el.querySelectorAll('input:checked')].map((i) => i.value);
+        else if (f.type === 'links') out[f.name] = el.read();
         else if (f.type === 'number') out[f.name] = el.value === '' ? null : Number(el.value);
         else out[f.name] = el.value.trim();
       }
@@ -114,14 +143,16 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
   });
 }
 
-export function confirmDialog(message, confirmLabel = 'Delete') {
+// The Cancel button comes first, so it has the focus when the dialog opens:
+// pressing Enter or Space by accident cancels.
+export function confirmDialog(message, confirmLabel = 'Delete', { cancelLabel = 'Cancel', danger = true } = {}) {
   return new Promise((resolve) => {
     const dlg = h('dialog', { class: 'dialog narrow' });
     const close = (v) => { dlg.close(); dlg.remove(); resolve(v); };
     dlg.append(h('p', {}, message), h('div', { class: 'dialog-actions' },
       h('span', { class: 'spacer' }),
-      h('button', { type: 'button', class: 'btn', onclick: () => close(false) }, 'Cancel'),
-      h('button', { type: 'button', class: 'btn danger', onclick: () => close(true) }, confirmLabel)));
+      h('button', { type: 'button', class: 'btn', autofocus: true, onclick: () => close(false) }, cancelLabel),
+      h('button', { type: 'button', class: `btn ${danger ? 'danger' : 'primary'}`, onclick: () => close(true) }, confirmLabel)));
     dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(false); });
     document.body.append(dlg);
     dlg.showModal();

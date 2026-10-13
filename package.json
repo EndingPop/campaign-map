@@ -1,6 +1,6 @@
 {
   "name": "campaign-map",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Shared tabletop campaign map: party route, typed pins, player notes, leads, distances. Static site on Cloudflare Workers with Firebase Auth and Firestore.",

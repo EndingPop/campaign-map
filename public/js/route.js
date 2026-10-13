@@ -13,29 +13,48 @@ export function routePoints(stops) {
   return pts;
 }
 
-// Splits the route into drawable pieces. A stop with travel 'teleport' ends
-// the road run before it and is reached by a separate teleport leg, so road
-// curves never bend toward a teleport destination.
-//   { kind: 'road', points: [...] }  smooth these
-//   { kind: 'teleport', from, to }   draw as an arc
-export function routeSegments(stops) {
+// The travel mode id of the leg into a stop (stops saved before travel
+// modes existed have none, and count as 'road').
+export const modeIdOf = (stop) => stop.travel || 'road';
+
+// Splits the route into drawable pieces. `lineOf(modeId)` says how a mode is
+// drawn: 'path' legs follow their bend points and consecutive legs of the
+// same mode are smoothed as one run; 'arc' legs (teleports, say) are a
+// separate curve straight from the previous stop, so road curves never bend
+// toward them.
+//   { kind: 'path', mode, points: [...] }  smooth these
+//   { kind: 'arc', mode, from, to }        draw as an arc
+export function routeSegments(stops, lineOf = (m) => (m === 'teleport' ? 'arc' : 'path')) {
   const segs = [];
   let run = [];
-  const closeRun = () => { if (run.length > 1) segs.push({ kind: 'road', points: run }); };
+  let runMode = null;
+  const closeRun = () => { if (run.length > 1) segs.push({ kind: 'path', mode: runMode, points: run }); };
   stops.forEach((s, i) => {
     const here = { x: s.x, y: s.y };
-    if (i > 0 && s.travel === 'teleport') {
+    if (i === 0) { run = [here]; runMode = null; return; }
+    const mode = modeIdOf(s);
+    const prev = { x: stops[i - 1].x, y: stops[i - 1].y };
+    if (lineOf(mode) === 'arc') {
       closeRun();
-      const prev = stops[i - 1];
-      segs.push({ kind: 'teleport', from: { x: prev.x, y: prev.y }, to: here });
-      run = [here];
+      segs.push({ kind: 'arc', mode, from: prev, to: here });
+      run = [here]; runMode = null;
       return;
     }
-    if (i > 0 && Array.isArray(s.path)) for (const p of s.path) run.push({ x: p.x, y: p.y });
+    if (runMode !== null && runMode !== mode) { closeRun(); run = [prev]; }
+    runMode = mode;
+    if (Array.isArray(s.path)) for (const p of s.path) run.push({ x: p.x, y: p.y });
     run.push(here);
   });
   closeRun();
   return segs;
+}
+
+// The points of the leg into stop i as drawn: an arc, or the smoothed path.
+export function legPoints(stops, i, line = 'path') {
+  const prev = stops[i - 1];
+  const s = stops[i];
+  if (line === 'arc') return arcPoints(prev, s);
+  return smoothPath([{ x: prev.x, y: prev.y }, ...(Array.isArray(s.path) ? s.path : []), { x: s.x, y: s.y }]);
 }
 
 // A gentle arc from a to b (quadratic curve bowed to one side by `bulge`
@@ -58,11 +77,13 @@ export function pathLength(points) {
   return total;
 }
 
-// Pixel length of the leg into stop i, measured along the drawn (smoothed)
-// road. Teleport legs and the first stop have no overland length.
-export function legPixels(stops, i) {
-  if (i < 1 || stops[i].travel === 'teleport') return 0;
+// Pixel length of the leg into stop i: along the drawn (smoothed) road for
+// 'path' legs, straight across for 'arc' legs. The first stop has no leg.
+// Whether a leg counts toward travel time is the travel mode's business.
+export function legPixels(stops, i, line = 'path') {
+  if (i < 1) return 0;
   const prev = stops[i - 1];
+  if (line === 'arc') return Math.hypot(stops[i].x - prev.x, stops[i].y - prev.y);
   const pts = [{ x: prev.x, y: prev.y }, ...(Array.isArray(stops[i].path) ? stops[i].path : []), { x: stops[i].x, y: stops[i].y }];
   return pathLength(smoothPath(pts));
 }

@@ -5,9 +5,10 @@ rules_version = '2';
 //               note, members, map settings, and writing notes under their
 //               original authors when restoring a backup. The two roles have
 //               the same powers; the names only show who is who.
-//   player - reads revealed pins, the route and all notes on revealed pins;
-//            writes only their own notes (incl. leads and people met), and
-//            may mark any visible lead open or done
+//   player - reads revealed pins, revealed NPCs, the route, and the travel
+//            modes and NPC affiliations already shown to players; reads all
+//            notes on revealed pins and NPCs; writes only their own notes,
+//            and may mark any visible lead open or done
 // Anyone signed in but not listed in /members gets nothing.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -109,7 +110,8 @@ service cloud.firestore {
       allow read: if member();
       allow delete: if isDM();
       // `path` (optional): bend points along the road from the previous stop.
-      // `travel` (optional): how the party reached this stop, 'road' or 'teleport'.
+      // `travel` (optional): id of the travel mode used to reach this stop
+      // (see travelModes); missing means 'road'.
       allow create, update: if isDM()
         && request.resource.data.seq is number
         && request.resource.data.x is number
@@ -117,7 +119,78 @@ service cloud.firestore {
         && (!('path' in request.resource.data)
             || (request.resource.data.path is list && request.resource.data.path.size() <= 300))
         && (!('travel' in request.resource.data)
-            || request.resource.data.travel in ['road', 'teleport']);
+            || isShortString(request.resource.data.travel, 60));
+    }
+
+    // Ways the party travels (road, teleport, ship...). Players read only
+    // modes with `revealed` true; the DM's app sets it the first time a
+    // route stop uses the mode, so an unused mode's name never reaches them.
+    match /travelModes/{modeId} {
+      allow read: if isDM() || (member() && resource.data.revealed == true);
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.label, 60)
+        && isShortString(request.resource.data.color, 30)
+        && request.resource.data.line in ['path', 'arc']
+        && request.resource.data.dash in ['dash', 'dot', 'solid']
+        && request.resource.data.revealed is bool
+        && request.resource.data.paces is map
+        && request.resource.data.paces.keys().hasOnly(['slow', 'normal', 'fast']);
+    }
+
+    // Groups an NPC can belong to (Harpers, Zhentarim...). Same reveal rule
+    // as travel modes: players read one only once it shows on a revealed NPC.
+    match /affiliations/{affId} {
+      allow read: if isDM() || (member() && resource.data.revealed == true);
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.name, 60)
+        && isShortString(request.resource.data.color, 30)
+        && isOptString(request.resource.data.get('description', null), 2000)
+        && request.resource.data.revealed is bool;
+    }
+
+    // NPCs. Only the DM creates and edits them. `pinIds` and
+    // `affiliationIds` hold the links players may see; hidden links and the
+    // DM's notes live in npcSecrets, which players cannot read at all.
+    match /npcs/{npcId} {
+      allow read: if isDM() || (member() && resource.data.visibility == 'public');
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.name, 100)
+        && request.resource.data.visibility in ['public', 'hidden']
+        && request.resource.data.status in ['alive', 'dead', 'missing', 'unknown']
+        && isOptString(request.resource.data.get('description', null), 5000)
+        && request.resource.data.pinIds is list && request.resource.data.pinIds.size() <= 200
+        && request.resource.data.affiliationIds is list && request.resource.data.affiliationIds.size() <= 50;
+
+      // Party notes on an NPC: plain notes, same ownership rules as pin notes.
+      match /notes/{noteId} {
+        function npcIsPublic() {
+          return get(/databases/$(database)/documents/npcs/$(npcId)).data.visibility == 'public';
+        }
+        function noteShape() {
+          return request.resource.data.keys().hasOnly(['text', 'authorEmail', 'authorName', 'createdAt', 'updatedAt'])
+            && isShortString(request.resource.data.text, 4000)
+            && isShortString(request.resource.data.authorEmail, 200);
+        }
+        function validNote() { return noteShape() && request.resource.data.authorEmail == email(); }
+        // The DM may write under another author when restoring a backup or
+        // converting old "person met" entries into NPC notes.
+        function adminRestore() { return isAdmin() && noteShape(); }
+        allow read: if isDM() || (member() && npcIsPublic());
+        allow create: if member() && (isDM() || npcIsPublic()) && (validNote() || adminRestore());
+        allow update: if member() && (isDM() || npcIsPublic())
+          && ((resource.data.authorEmail == email() && validNote()) || adminRestore());
+        allow delete: if isDM() || (member() && resource.data.authorEmail == email());
+      }
+    }
+
+    // DM-only part of each NPC (same id as the NPC): DM notes, hidden
+    // location and affiliation links, and which old "person met" entries it
+    // was converted from.
+    match /npcSecrets/{npcId} {
+      allow read, write: if isDM();
     }
   }
 }

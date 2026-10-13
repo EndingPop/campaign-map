@@ -45,6 +45,16 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
     watchPinTypes: (cb) => watch(collection(db, 'pinTypes'), cb),
     watchPins: (isDM, cb) =>
       watch(isDM ? collection(db, 'pins') : query(collection(db, 'pins'), where('visibility', '==', 'public')), cb),
+    // Players get only revealed modes, affiliations and NPCs (the rules refuse
+    // anything else); the DM gets all of them.
+    watchTravelModes: (isDM, cb) =>
+      watch(isDM ? collection(db, 'travelModes') : query(collection(db, 'travelModes'), where('revealed', '==', true)), cb),
+    watchAffiliations: (isDM, cb) =>
+      watch(isDM ? collection(db, 'affiliations') : query(collection(db, 'affiliations'), where('revealed', '==', true)), cb),
+    watchNpcs: (isDM, cb) =>
+      watch(isDM ? collection(db, 'npcs') : query(collection(db, 'npcs'), where('visibility', '==', 'public')), cb),
+    watchNpcSecrets: (cb) => watch(collection(db, 'npcSecrets'), cb),
+    watchNpcNotes: (npcId, cb) => watch(collection(db, 'npcs', npcId, 'notes'), cb),
     watchWaypoints: (cb) => watch(collection(db, 'waypoints'), cb),
     watchNotes: (pinId, cb) => watch(collection(db, 'pins', pinId, 'notes'), cb),
     watchDmText: (pinId, cb) =>
@@ -94,6 +104,58 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
     setLeadStatus: (pinId, noteId, status) => updateDoc(doc(db, 'pins', pinId, 'notes', noteId), { status }),
     deleteNote: (pinId, noteId) => deleteDoc(doc(db, 'pins', pinId, 'notes', noteId)),
 
+    // NPCs: the public part and the DM-only part are written together.
+    async saveNpc(id, data, secret, by) {
+      const ref = id ? doc(db, 'npcs', id) : doc(collection(db, 'npcs'));
+      const batch = writeBatch(db);
+      batch.set(ref, { ...data, updatedAt: serverTimestamp(), updatedBy: by });
+      batch.set(doc(db, 'npcSecrets', ref.id), secret);
+      await batch.commit();
+      return ref.id;
+    },
+    async deleteNpc(id) {
+      const batch = writeBatch(db);
+      (await getDocs(collection(db, 'npcs', id, 'notes'))).forEach((n) => batch.delete(n.ref));
+      batch.delete(doc(db, 'npcSecrets', id));
+      batch.delete(doc(db, 'npcs', id));
+      await batch.commit();
+    },
+    addNpcNote: (npcId, note) =>
+      addDoc(collection(db, 'npcs', npcId, 'notes'), { ...note, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    updateNpcNote: (npcId, noteId, fields) =>
+      updateDoc(doc(db, 'npcs', npcId, 'notes', noteId), { ...fields, updatedAt: serverTimestamp() }),
+    deleteNpcNote: (npcId, noteId) => deleteDoc(doc(db, 'npcs', npcId, 'notes', noteId)),
+    // Search: notes of each listed NPC (ones this person can see).
+    async readNpcTexts(npcIds) {
+      const out = new Map();
+      await Promise.all(npcIds.map(async (id) => {
+        try { out.set(id, { notes: listDocs(await getDocs(collection(db, 'npcs', id, 'notes'))) }); } catch { /* hidden or deleted since */ }
+      }));
+      return out;
+    },
+
+    saveTravelMode: (id, data) => setDoc(doc(db, 'travelModes', id), data),
+    deleteTravelMode: (id) => deleteDoc(doc(db, 'travelModes', id)),
+    saveAffiliation: (id, data) => setDoc(doc(db, 'affiliations', id), data),
+    deleteAffiliation: (id) => deleteDoc(doc(db, 'affiliations', id)),
+    // Shows a travel mode or affiliation to players (the DM's app calls this
+    // when a stop or a revealed NPC first uses it).
+    reveal: (col, id) => updateDoc(doc(db, col, id), { revealed: true }),
+
+    // Several writes at once, in batches: [{ op: 'set' | 'delete', path, data }].
+    // Used to convert old "person met" entries into NPCs.
+    newId: (col) => doc(collection(db, col)).id,
+    async applyOps(ops) {
+      for (let i = 0; i < ops.length; i += RESTORE_BATCH) {
+        const batch = writeBatch(db);
+        for (const o of ops.slice(i, i + RESTORE_BATCH)) {
+          const ref = doc(db, ...o.path);
+          if (o.op === 'delete') batch.delete(ref); else batch.set(ref, o.data);
+        }
+        await batch.commit();
+      }
+    },
+
     addWaypoint: (data) => addDoc(collection(db, 'waypoints'), { ...data, createdAt: serverTimestamp() }),
     updateWaypoint: (id, data) => updateDoc(doc(db, 'waypoints', id), data),
     deleteWaypoint: (id) => deleteDoc(doc(db, 'waypoints', id)),
@@ -136,6 +198,8 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
         const dm = await getDoc(doc(db, 'pins', p.id, 'dm', 'private'));
         p.dmText = dm.exists() ? dm.data().text || '' : '';
       }
+      const npcs = await all(['npcs']);
+      for (const n of npcs) n.notes = await all(['npcs', n.id, 'notes']);
       const settings = await getDoc(doc(db, 'settings', 'map'));
       return {
         exportedAt: new Date().toISOString(),
@@ -145,6 +209,10 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
         pinTypes: await all(['pinTypes']),
         waypoints: await all(['waypoints']),
         pins,
+        npcs,
+        npcSecrets: await all(['npcSecrets']),
+        affiliations: await all(['affiliations']),
+        travelModes: await all(['travelModes']),
       };
     },
   };

@@ -26,6 +26,13 @@ const pin = (over = {}) => ({
   visibility: 'public', description: '', ...over,
 });
 const note = (author, over = {}) => ({ text: 'A note', authorEmail: author, authorName: 'Someone', ...over });
+const npc = (over = {}) => ({
+  name: 'Test NPC', status: 'alive', visibility: 'public', description: '', pinIds: [], affiliationIds: [], ...over,
+});
+const mode = (over = {}) => ({
+  label: 'Ship', color: '#336699', line: 'arc', dash: 'solid', revealed: false, paces: { normal: 96 }, ...over,
+});
+const aff = (over = {}) => ({ name: 'Harpers', color: '#1e5bc6', description: '', revealed: false, ...over });
 
 before(async () => {
   env = await initializeTestEnvironment({
@@ -52,6 +59,15 @@ beforeEach(async () => {
     await setDoc(doc(db, 'waypoints', 'w1'), { seq: 1, x: 1, y: 1 });
     await setDoc(doc(db, 'pinTypes', 'city'), { label: 'Town/City', kind: 'base', color: '#c0392b' });
     await setDoc(doc(db, 'settings', 'map'), { imagePath: 'map/map.jpg', imageWidth: 4000, imageHeight: 3000 });
+    await setDoc(doc(db, 'npcs', 'known'), npc());
+    await setDoc(doc(db, 'npcs', 'unmet'), npc({ visibility: 'hidden', name: 'Secret villain' }));
+    await setDoc(doc(db, 'npcs', 'known', 'notes', 'k1'), note(PLAYER));
+    await setDoc(doc(db, 'npcs', 'unmet', 'notes', 'u1'), note(DM));
+    await setDoc(doc(db, 'npcSecrets', 'known'), { text: 'Works for the cult', hiddenPinIds: ['open'], hiddenAffiliationIds: ['cult'] });
+    await setDoc(doc(db, 'travelModes', 'road'), mode({ label: 'Road', line: 'path', revealed: true, paces: { slow: 18, normal: 24, fast: 30 } }));
+    await setDoc(doc(db, 'travelModes', 'airship'), mode({ label: 'Airship', revealed: false }));
+    await setDoc(doc(db, 'affiliations', 'harpers'), aff({ revealed: true }));
+    await setDoc(doc(db, 'affiliations', 'cult'), aff({ name: 'Cult of the Dragon', revealed: false }));
   });
 });
 
@@ -152,6 +168,101 @@ describe('players', () => {
   });
 });
 
+describe('players: NPCs, affiliations, travel modes', () => {
+  test('read revealed NPCs and their notes, not hidden ones', async () => {
+    const db = as(PLAYER2);
+    await assertSucceeds(getDoc(doc(db, 'npcs', 'known')));
+    await assertSucceeds(getDocs(query(collection(db, 'npcs'), where('visibility', '==', 'public'))));
+    await assertSucceeds(getDocs(collection(db, 'npcs', 'known', 'notes')));
+    await assertFails(getDoc(doc(db, 'npcs', 'unmet')));
+    await assertFails(getDocs(collection(db, 'npcs')));
+    await assertFails(getDocs(collection(db, 'npcs', 'unmet', 'notes')));
+  });
+  test('never read NPC secrets (DM notes, hidden links and affiliations)', async () => {
+    const db = as(PLAYER);
+    await assertFails(getDoc(doc(db, 'npcSecrets', 'known')));
+    await assertFails(getDocs(collection(db, 'npcSecrets')));
+  });
+  test('cannot create or edit NPCs or their secrets', async () => {
+    const db = as(PLAYER);
+    await assertFails(setDoc(doc(db, 'npcs', 'mine'), npc()));
+    await assertFails(updateDoc(doc(db, 'npcs', 'known'), { status: 'dead' }));
+    await assertFails(deleteDoc(doc(db, 'npcs', 'known')));
+    await assertFails(setDoc(doc(db, 'npcSecrets', 'known'), { text: '' }));
+  });
+  test('add, edit and delete their own notes on revealed NPCs only', async () => {
+    const db = as(PLAYER2);
+    await assertSucceeds(setDoc(doc(db, 'npcs', 'known', 'notes', 'k2'), note(PLAYER2)));
+    await assertSucceeds(updateDoc(doc(db, 'npcs', 'known', 'notes', 'k2'), { text: 'Edited' }));
+    await assertFails(setDoc(doc(db, 'npcs', 'unmet', 'notes', 'u2'), note(PLAYER2)));
+    await assertFails(setDoc(doc(db, 'npcs', 'known', 'notes', 'k3'), note(PLAYER)));
+    await assertFails(setDoc(doc(db, 'npcs', 'known', 'notes', 'k4'), note(PLAYER2, { kind: 'lead' })));
+    await assertFails(updateDoc(doc(db, 'npcs', 'known', 'notes', 'k1'), { text: 'Hijack' }));
+    await assertFails(deleteDoc(doc(db, 'npcs', 'known', 'notes', 'k1')));
+    await assertSucceeds(deleteDoc(doc(db, 'npcs', 'known', 'notes', 'k2')));
+  });
+  test('read only revealed travel modes and affiliations', async () => {
+    const db = as(PLAYER);
+    await assertSucceeds(getDoc(doc(db, 'travelModes', 'road')));
+    await assertSucceeds(getDocs(query(collection(db, 'travelModes'), where('revealed', '==', true))));
+    await assertFails(getDoc(doc(db, 'travelModes', 'airship')));
+    await assertFails(getDocs(collection(db, 'travelModes')));
+    await assertSucceeds(getDoc(doc(db, 'affiliations', 'harpers')));
+    await assertSucceeds(getDocs(query(collection(db, 'affiliations'), where('revealed', '==', true))));
+    await assertFails(getDoc(doc(db, 'affiliations', 'cult')));
+    await assertFails(getDocs(collection(db, 'affiliations')));
+  });
+  test('cannot write travel modes or affiliations', async () => {
+    const db = as(PLAYER);
+    await assertFails(updateDoc(doc(db, 'travelModes', 'airship'), { revealed: true }));
+    await assertFails(setDoc(doc(db, 'travelModes', 'walk'), mode()));
+    await assertFails(updateDoc(doc(db, 'affiliations', 'cult'), { revealed: true }));
+  });
+});
+
+describe('DM: NPCs, affiliations, travel modes', () => {
+  test('reads everything, including hidden NPCs and secrets', async () => {
+    const db = as(DM);
+    await assertSucceeds(getDocs(collection(db, 'npcs')));
+    await assertSucceeds(getDocs(collection(db, 'npcSecrets')));
+    await assertSucceeds(getDocs(collection(db, 'npcs', 'unmet', 'notes')));
+    await assertSucceeds(getDocs(collection(db, 'travelModes')));
+    await assertSucceeds(getDocs(collection(db, 'affiliations')));
+  });
+  test('creates, edits and deletes NPCs and secrets', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'npcs', 'new'), npc({ pinIds: ['open'], affiliationIds: ['harpers'], status: 'missing' })));
+    await assertSucceeds(setDoc(doc(db, 'npcSecrets', 'new'), { text: 'x', hiddenPinIds: [], hiddenAffiliationIds: [] }));
+    await assertSucceeds(updateDoc(doc(db, 'npcs', 'new'), { visibility: 'hidden' }));
+    await assertSucceeds(deleteDoc(doc(db, 'npcs', 'new')));
+  });
+  test('rejects malformed NPCs', async () => {
+    const db = as(DM);
+    await assertFails(setDoc(doc(db, 'npcs', 'bad'), npc({ status: 'undead' })));
+    await assertFails(setDoc(doc(db, 'npcs', 'bad'), npc({ name: '' })));
+    await assertFails(setDoc(doc(db, 'npcs', 'bad'), npc({ visibility: 'secret' })));
+    await assertFails(setDoc(doc(db, 'npcs', 'bad'), npc({ pinIds: 'open' })));
+  });
+  test('writes NPC notes under original authors (conversion and restore)', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'npcs', 'unmet', 'notes', 'c1'), note(PLAYER)));
+    await assertFails(setDoc(doc(db, 'npcs', 'unmet', 'notes', 'c2'), note(PLAYER, { name: 'x' })));
+  });
+  test('manages travel modes and affiliations, with shape checks', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'travelModes', 'ship'), mode({ paces: { slow: null, normal: 96, fast: null } })));
+    await assertSucceeds(updateDoc(doc(db, 'travelModes', 'airship'), { revealed: true }));
+    await assertFails(setDoc(doc(db, 'travelModes', 'bad'), mode({ line: 'zigzag' })));
+    await assertFails(setDoc(doc(db, 'travelModes', 'bad'), mode({ paces: { cruising: 50 } })));
+    await assertFails(setDoc(doc(db, 'travelModes', 'bad'), mode({ revealed: 'yes' })));
+    await assertSucceeds(deleteDoc(doc(db, 'travelModes', 'ship')));
+    await assertSucceeds(setDoc(doc(db, 'affiliations', 'zhent'), aff({ name: 'Zhentarim', description: 'Black Network' })));
+    await assertFails(setDoc(doc(db, 'affiliations', 'bad'), aff({ name: '' })));
+    await assertFails(setDoc(doc(db, 'affiliations', 'bad'), aff({ description: 'x'.repeat(2001) })));
+    await assertSucceeds(deleteDoc(doc(db, 'affiliations', 'zhent')));
+  });
+});
+
 describe('DM', () => {
   test('reads everything including hidden pins and DM text', async () => {
     const db = as(DM);
@@ -180,7 +291,9 @@ describe('DM', () => {
     await assertFails(updateDoc(doc(db, 'waypoints', 'w2'), { path: Array.from({ length: 301 }, () => ({ x: 1, y: 1 })) }));
     await assertSucceeds(updateDoc(doc(db, 'waypoints', 'w2'), { travel: 'teleport', path: [] }));
     await assertSucceeds(updateDoc(doc(db, 'waypoints', 'w2'), { travel: 'road' }));
-    await assertFails(updateDoc(doc(db, 'waypoints', 'w2'), { travel: 'flying' }));
+    await assertSucceeds(updateDoc(doc(db, 'waypoints', 'w2'), { travel: 'airship' })); // any travel mode id
+    await assertFails(updateDoc(doc(db, 'waypoints', 'w2'), { travel: '' }));
+    await assertFails(updateDoc(doc(db, 'waypoints', 'w2'), { travel: 7 }));
     await assertSucceeds(deleteDoc(doc(db, 'waypoints', 'w2')));
     await assertSucceeds(setDoc(doc(db, 'pinTypes', 'giant'), { label: 'Giant sighting', kind: 'base', color: '#555' }));
     await assertFails(setDoc(doc(db, 'pinTypes', 'bad'), { label: 'Bad', kind: 'square', color: '#555' }));

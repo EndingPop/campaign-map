@@ -1,4 +1,4 @@
-# Campaign map (1.0)
+# Campaign map (1.1)
 
 A private, shared map for a tabletop campaign. The DM marks where the party has been and
 where it is now; everyone in the group can open the map, see the places the party knows
@@ -7,12 +7,17 @@ about, and add what they learned.
 - **Typed pins**, each with a base type (shape and color) and any number of ring types
   (outlines), for example Town/City with a faction ring. Types are set per campaign.
 - **Hidden pins and DM-only text**, invisible to players until revealed.
-- **The party's route**, drawn as a smooth curve along the roads the DM clicks, with
-  teleport legs drawn separately; the newest stop is the party's current position.
+- **The party's route**, drawn as a smooth curve along the roads the DM clicks; the newest
+  stop is the party's current position.
+- **Travel modes** (road, teleport, ship, whatever the DM adds), each with its own line and
+  travel pace. Players see a mode in the legend only once the route has used it.
 - **Distances and travel time** for every leg and the whole route, at 5e travel pace, plus
   a Measure tool for everyone.
-- **Notes, leads and people met** on each pin, written by any player and signed.
-- **Search** across pins, notes and route stops, limited to what each person may see.
+- **Notes and leads** on each pin, written by any player and signed.
+- **NPCs** with a description, status, places, affiliations (each link can be hidden from
+  players), party notes and DM-only notes, listed in their own tab.
+- **PC view:** a DM window that shows only what players see, for projecting at the table.
+- **Search** across pins, NPCs, notes and route stops, limited to what each person may see.
 - **Roles:** players, and a DM and an admin with the same full powers.
 - **Backup and restore** from the app.
 
@@ -110,7 +115,7 @@ Use three terminals, all in this folder:
 | Terminal | Command | What it does |
 | --- | --- | --- |
 | 1 | `npm run emulators` | Starts the local Auth and Firestore emulators. The first run downloads them. Leave it running. |
-| 2 | `npm run seed` | Loads test members, the starting pin types, six pins, a lead and a person met, and a five-stop route (one leg a teleport) into the local emulator. Run it again any time to reset that data. |
+| 2 | `npm run seed` | Loads test members, the starting pin types and travel modes, six pins, a lead and an old-style person met, two affiliations, two NPCs, and a five-stop route (one leg a teleport) into the local emulator. Run it again any time to reset that data. |
 | 3 | `npm run serve` | Serves the site at <http://localhost:5173>. |
 
 Open <http://localhost:5173> and choose **Sign in with Google**. The emulator shows a fake
@@ -209,34 +214,59 @@ The app picks its database from the address it is opened on: the production host
   is drawn as a smooth curve through every stop and bend point, so three or four clicks per leg
   follow most roads. The newest stop is the party's current position. **Party arrived here** on
   a pin adds a straight leg in one step.
-- **Teleports:** when adding a stop, set **How the party got here** to the teleport option
-  (its name comes from `TELEPORT` in `site-config.js`). Click only the destination (or use
-  **Party arrived here** on its pin). The leg is drawn as a dotted violet arc straight from
-  the previous stop. Colors are in `ROUTE_STYLES` in `public/js/config.js`.
+- **Travel modes:** when adding a stop, **How the party got here** picks the travel mode.
+  The DM's app creates two on first sign-in: the road (`Party route`) and a teleport (its
+  name comes from `TELEPORT` in `site-config.js`). Add more in account menu > **Travel
+  modes**: name, color, line style, whether the line follows clicked road points or is a
+  direct arc between stops, and the slow, normal and fast pace in miles a day. Fill in only
+  the paces that apply (a ship might have just one); with none the leg has no distance or
+  travel time, like a teleport. For a direct-arc mode, click only the destination (or use
+  **Party arrived here** on its pin). Players see a mode in the legend only after a stop uses
+  it: the DM's app marks it revealed then. The DM's legend marks unused modes.
 - **Distances and travel time:** each stop in the route list shows the miles of the leg into
-  it (measured along the drawn road) and the days it takes at normal pace (24 miles a day);
-  the line under **Route** totals the overland miles and counts the teleports (hover it for
-  slow and fast pace). Teleport legs count no miles. The **ruler button** under the zoom
+  it (along the drawn road, or straight across for a direct-arc mode) and the days it takes
+  at that mode's normal pace (or its only pace); the line under **Route** totals the miles
+  and days and counts the legs with no travel time. The **ruler button** under the zoom
   buttons is the Measure tool, for everyone: click points, read the miles and the days at
   slow, normal and fast pace; Backspace removes a point, Esc ends.
 - **Leg details:** click any leg of the route line, a stop dot, or a stop in the route list
   for a popup with where the leg runs from and to, the stop's session date, the miles along
-  the road (or the teleport) and the days at normal, slow and fast pace. The DM gets an
+  the leg and the days at each pace its travel mode has. The DM gets an
   **Edit stop** button there. The route only responds to clicks in Select mode, so drawing a
   new leg or measuring across it still works.
-- **Leads and people met:** a pin's panel has three lists: **Leads and rumors**,
-  **People met** and **Party notes**. The form at the bottom adds any of the three (pick
-  which in its menu; a person needs a name). Anyone who can see a lead can tick it as
-  followed up or untick it; only its author can edit the words. The DM can delete any entry.
+- **Leads and notes:** a pin's panel lists **Leads and rumors**, the **NPCs** linked to the
+  place, and **Party notes**. The form at the bottom adds a note or a lead. Anyone who can
+  see a lead can tick it as followed up or untick it; only its author can edit the words.
+  The DM can delete any entry.
+- **NPCs:** the **NPCs** tab in the side panel lists every NPC you can see, with a filter
+  by affiliation. Only the DM creates and edits them (**Add NPC** there, or **New NPC here**
+  on a pin): name, status (alive, dead, missing, unknown), who can see the NPC, a
+  description players see, DM-only notes, places (pins), and affiliations. Each place and
+  affiliation link has its own **Hidden** box that keeps that link from players. New NPCs
+  start hidden. Everyone who can see an NPC can add party notes to it. Affiliations are
+  managed in account menu > **NPC affiliations** (name, color, description); players see one
+  once it is a visible link on an NPC they can see.
+- **Upgrading from 1.0:** "Person met" entries on pins become NPCs with account menu >
+  **Convert "People met" to NPCs…** (DM). Each becomes a hidden NPC linked to its pin, with
+  the entry's text as a party note by its original author. Check them, merge duplicates,
+  reveal them, then run the same menu item again to remove the old entries.
+- **PC view:** **PC view** in the DM toolbar switches that window to exactly what players
+  see: it reloads the data as a player would, so hidden pins, NPCs and DM notes are not in
+  that window at all, and it turns editing off. The setting belongs to the window (it is in
+  the address, `?view=pc`), so the DM can keep a DM window on the laptop and a PC view
+  window on the projector; bookmark the PC view address to open it that way. Leaving PC view
+  (the **PC view** badge at the top, or the account menu) asks first, with **Stay in PC view**
+  as the default button.
 - **Search** (top of the side panel; the x clears it) finds words in pin names,
-  descriptions, pin types, notes, leads, people met and their authors, and in route stop
-  names, dates and teleports. The **Pins and notes** and **Route stops** boxes choose what
-  it looks through. It only ever sees what the signed-in person can open: players get
-  public pins and their notes; the DM also gets hidden pins (marked "hidden") and DM-only
-  text. Notes are loaded when search is first used and refreshed at most once a minute.
+  descriptions, pin types, notes, leads and their authors; in NPC names, descriptions,
+  status, affiliations, places and notes; and in route stop names, dates and travel modes.
+  The **Pins and notes**, **NPCs** and **Route stops** boxes choose what it looks through. It
+  only ever sees what the signed-in person can open: players get public pins and NPCs and
+  their notes; the DM also gets hidden ones (marked "hidden"), hidden affiliations and
+  DM-only text. Notes are loaded when search is first used and refreshed at most once a
+  minute.
 - **Fixing a leg:** **Edit** next to a stop in the route list lets you rename it, delete it,
-  redraw the road leading into it, make that road a straight line, or change the leg to or
-  from a teleport.
+  change its travel mode, redraw the road leading into it, or make that road a straight line.
 - **Backups:** after each session, sign in as admin or DM and choose **Download backup
   (JSON)** from the account menu. The file name includes the site title and project.
   Firestore's managed backups are not in the free tier, so these files are the only copies:
@@ -293,7 +323,7 @@ private files when it runs, so the check itself publishes nothing.
 | `public/js/config.js` | App-wide settings; loads `site-config.js` (or the example) |
 | `public/js/site-config.example.js` | Template for this copy's settings (`site-config.js`, not committed) |
 | `public/js/markers.js` | Pin and party marker drawing |
-| `public/js/route.js` | Route geometry: bend points, curve smoothing, leg lengths |
+| `public/js/route.js` | Route geometry: travel-mode segments, curve smoothing, leg lengths |
 | `public/js/restore.js` | Checks a backup file and plans the writes that restore it |
 | `public/js/ui.js` | Dialogs, messages and small helpers |
 | `public/vendor/` | Leaflet 1.9.4 and Firebase JS SDK 13.0.0, bundled; rebuild with `npm run vendor` |

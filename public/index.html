@@ -30,6 +30,7 @@
         <span id="party-label">Party position not set</span>
       </button>
       <span class="spacer"></span>
+      <button id="pc-view-badge" class="pc-view-badge" type="button" title="This window shows only what players see. Click to leave PC view." hidden>PC view</button>
       <span id="env-badge" class="env-badge" hidden></span>
       <div class="menu">
         <button id="user-button" class="user-btn" type="button" aria-haspopup="menu" aria-expanded="false">
@@ -43,8 +44,8 @@
       <section class="side-section search-section">
         <h2>Search</h2>
         <div class="search-box">
-          <input id="search-input" class="search-input" type="search" placeholder="Places, notes, stops" autocomplete="off"
-            aria-label="Search pins, notes and route stops" aria-controls="search-results">
+          <input id="search-input" class="search-input" type="search" placeholder="Places, NPCs, notes, stops" autocomplete="off"
+            aria-label="Search pins, NPCs, notes and route stops" aria-controls="search-results">
           <button id="search-clear" class="search-clear" type="button" title="Clear search" aria-label="Clear search" hidden>
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
@@ -53,15 +54,22 @@
         <p id="search-status" class="search-status" aria-live="polite" hidden></p>
         <ol id="search-results" class="search-results" hidden></ol>
       </section>
-      <section class="side-section">
-        <h2>Show on map</h2>
-        <div id="filters"></div>
-      </section>
-      <section class="side-section">
-        <h2>Route</h2>
-        <p id="route-summary" class="route-summary" hidden></p>
-        <ol id="route-list" class="route-list" reversed></ol>
-      </section>
+      <div id="side-tabs" class="side-tabs" role="tablist" aria-label="Side panel">
+        <button type="button" role="tab" data-tab="map" aria-controls="map-pane" aria-selected="true">Map and route</button>
+        <button type="button" role="tab" data-tab="npcs" aria-controls="npc-pane" aria-selected="false">NPCs <span id="npc-tab-count" class="tab-count"></span></button>
+      </div>
+      <div id="map-pane" role="tabpanel">
+        <section class="side-section">
+          <h2>Show on map</h2>
+          <div id="filters"></div>
+        </section>
+        <section class="side-section">
+          <h2>Route</h2>
+          <p id="route-summary" class="route-summary" hidden></p>
+          <ol id="route-list" class="route-list" reversed></ol>
+        </section>
+      </div>
+      <section id="npc-pane" class="side-section npc-pane" role="tabpanel" hidden></section>
     </aside>
 
     <div id="map" class="map" aria-label="Campaign map"></div>
@@ -73,6 +81,7 @@
       <button type="button" data-mode="addPin" aria-pressed="false">Add pin</button>
       <button type="button" data-mode="addStop" aria-pressed="false">Add stop</button>
       <button type="button" data-mode="move" aria-pressed="false">Move pins</button>
+      <button id="pc-view-btn" type="button" class="pc-view-btn" title="Switch this window to what players see, for projecting at the table">PC view</button>
     </nav>
     <div id="mode-hint" class="mode-hint" role="status" hidden></div>
   </div>

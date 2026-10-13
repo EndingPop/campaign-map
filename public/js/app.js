@@ -1,8 +1,8 @@
 // Campaign map: main UI.
-import { detectEnv, firebaseConfigFor, DEFAULT_MAP, STARTING_PIN_TYPES, ROUTE_STYLES, TRAVEL_PACES, SITE_TITLE, SITE_CONFIG_MISSING } from './config.js';
+import { detectEnv, firebaseConfigFor, DEFAULT_MAP, STARTING_PIN_TYPES, STARTING_TRAVEL_MODES, NPC_STATUSES, TRAVEL_PACES, SITE_TITLE, SITE_CONFIG_MISSING } from './config.js';
 import { h, toast, explainError, formDialog, confirmDialog, panelDialog, formatDate } from './ui.js';
 import { pinSvg, typeSwatch, partySvg, PARTY_SIZE } from './markers.js';
-import { routeSegments, arcPoints, smoothPath, pathLength, legPixels } from './route.js';
+import { routeSegments, smoothPath, pathLength, legPixels, legPoints, modeIdOf } from './route.js';
 import { parseBackup, summarize } from './restore.js';
 
 const L = window.L;
@@ -22,9 +22,23 @@ const state = {
   notes: [],
   dmText: '',
   noteDraft: '',
-  noteKind: 'note', // what the pin panel's add form adds: note, lead or npc
-  npcName: '',
+  noteKind: 'note', // what the pin panel's add form adds: note or lead
   selectedPinId: null,
+  selectedNpcId: null, // the detail panel shows a pin or an NPC, never both
+  npcs: new Map(),
+  npcSecrets: new Map(), // DM only: DM notes and hidden links, by NPC id
+  npcNotes: [],
+  npcNoteDraft: '',
+  affiliations: new Map(),
+  travelModes: new Map(),
+  travelModesLoaded: false,
+  revealing: new Set(), // reveal writes in flight, so each is sent once
+  sideTab: readPref('sideTab', 'map'),
+  npcFilter: '', // affiliation id, or '' for all
+  // PC view: a DM window that loads and shows only what players see, for
+  // projecting at the table. Kept in this window's address (?view=pc), so a
+  // second window, or a refresh, keeps its own setting.
+  pcView: new URLSearchParams(location.search).get('view') === 'pc',
   mode: 'select',
   hiddenFilters: new Set(readPref('hiddenFilters', [])),
   showRoute: readPref('showRoute', true),
@@ -41,23 +55,27 @@ const state = {
   measure: null, // { points: [{x, y}] } while the Measure tool is on
   search: {
     query: '',
-    scope: { pins: true, stops: true, ...readPref('searchScope', {}) },
+    scope: { pins: true, npcs: true, stops: true, ...readPref('searchScope', {}) },
     texts: null,     // Map pinId -> { notes, dmText }, loaded when search is used
+    npcTexts: null,  // Map npcId -> { notes }
     loadedAt: 0,
     loading: null,   // promise while loading
     generation: 0,   // bumps on reset so a late load from a previous account is dropped
   },
 };
 
-// Teleport wording comes from site-config.js (e.g. "Harper teleport").
-const TP = ROUTE_STYLES.teleport;
 // Short name for downloaded files, from the site title.
 const fileSlug = () => SITE_TITLE.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'campaign-map';
 
-const isDM = () => state.role === 'dm' || state.role === 'admin';
-// The DM has full admin powers (members, map settings, backup and restore);
-// the rules grant the same. The role names only show who is who.
-const isAdmin = () => state.role === 'admin' || state.role === 'dm';
+// The account's own role. The DM has full admin powers (members, map
+// settings, backup and restore); the rules grant the same. The role names
+// only show who is who.
+const hasDMRole = () => state.role === 'dm' || state.role === 'admin';
+// What this window acts as. In PC view a DM's window behaves exactly like a
+// player's: it loads only what players can read and offers no editing.
+const isDM = () => hasDMRole() && !state.pcView;
+const isAdmin = isDM;
+const inPcView = () => hasDMRole() && state.pcView;
 
 function readPref(key, fallback) {
   try { const v = localStorage.getItem(`campaign-map.${key}`); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
@@ -138,6 +156,10 @@ function onUser(user) {
 function stopData() {
   state.dataSubs.forEach((u) => u());
   state.dataSubs = [];
+  // Nothing loaded for one view may linger into another (PC view especially).
+  state.pins = new Map(); state.npcs = new Map(); state.npcSecrets = new Map();
+  state.affiliations = new Map(); state.travelModes = new Map(); state.travelModesLoaded = false;
+  renderPins(); renderNpcList();
   closeDetail();
   resetSearch(); // a different account or role must not reuse loaded notes
 }
@@ -166,10 +188,35 @@ function enterApp(roleChanged) {
     }),
     b.watchWaypoints((list) => {
       state.waypoints = list.sort((a, b2) => a.seq - b2.seq);
+      syncReveals();
       renderRoute(); renderRouteList(); renderParty(); renderDetail(); renderDraft(); renderSearchResults();
     }),
     b.watchMembers((list) => { state.members = list; refreshDialogs(); }),
+    b.watchTravelModes(isDM(), (list) => {
+      state.travelModes = new Map(list.map((m) => [m.id, m]));
+      if (!state.travelModesLoaded) { state.travelModesLoaded = true; addStartingTravelModes(); }
+      syncReveals();
+      renderRoute(); renderRouteList(); renderFilters(); renderSearchResults(); refreshDialogs();
+    }),
+    b.watchAffiliations(isDM(), (list) => {
+      state.affiliations = new Map(list.map((a) => [a.id, a]));
+      syncReveals();
+      renderNpcList(); renderDetail(); refreshDialogs();
+    }),
+    b.watchNpcs(isDM(), (list) => {
+      state.npcs = new Map(list.map((n) => [n.id, n]));
+      if (state.selectedNpcId && !state.npcs.has(state.selectedNpcId)) closeDetail();
+      state.search.loadedAt = 0;
+      syncReveals();
+      renderNpcList(); renderDetail(); renderSearchResults(); refreshDialogs();
+    }),
   );
+  if (isDM()) {
+    state.dataSubs.push(b.watchNpcSecrets((list) => {
+      state.npcSecrets = new Map(list.map((x) => [x.id, x]));
+      renderNpcList(); renderDetail(); renderSearchResults();
+    }));
+  }
 }
 
 // ---------- chrome: top bar, menu, DM tools ----------
@@ -188,9 +235,12 @@ function renderChrome() {
 
   $('user-name').textContent = state.member?.characterName || state.member?.displayName || state.user.displayName || state.user.email;
   $('user-role').textContent = { admin: 'Admin', dm: 'DM', player: 'Player' }[state.role] || '';
+  document.body.classList.toggle('pc-view', inPcView());
+  $('pc-view-badge').hidden = !inPcView();
 
   const items = [];
-  if (isDM()) items.push(['Pin types', openPinTypes]);
+  if (inPcView()) items.push(['Leave PC view…', leavePcView]);
+  if (isDM()) items.push(['Pin types', openPinTypes], ['Travel modes', openTravelModes], ['NPC affiliations', openAffiliations], ['Convert "People met" to NPCs…', convertPeopleMet]);
   if (isAdmin()) items.push(['Members', openMembers], ['Map settings', openMapSettings], ['Download backup (JSON)', exportBackup], ['Restore from backup…', restoreBackup]);
   if (env === 'demo') {
     items.push(['sep']);
@@ -203,6 +253,28 @@ function renderChrome() {
 
   $('dm-tools').hidden = !isDM();
   if (!isDM()) setMode('select');
+  renderSideTabs();
+}
+
+// ---------- PC view ----------
+function setPcView(on) {
+  state.pcView = on;
+  const params = new URLSearchParams(location.search);
+  if (on) params.set('view', 'pc'); else params.delete('view');
+  const qs = params.toString();
+  history.replaceState(null, '', `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`);
+  closeDetail();
+  setMode('select');
+  // Reload everything as the new view: PC view must never hold DM-only data.
+  enterApp(true);
+  toast(on ? 'PC view: this window now shows only what players see.' : 'DM view.', 'ok');
+}
+
+async function leavePcView() {
+  const ok = await confirmDialog(
+    'Leave PC view? This window will show hidden pins, hidden NPCs and DM notes. If this screen is projected or shared, players will see them.',
+    'Show DM view', { cancelLabel: 'Stay in PC view' });
+  if (ok) setPcView(false);
 }
 
 function toggleMenu(open) {
@@ -214,7 +286,7 @@ function toggleMenu(open) {
 
 const MODE_HINTS = {
   addPin: 'Click the map where the new pin goes. Press Esc to stop.',
-  addStop: `Click along the road; clicking a pin routes through it. End with Stop here or Enter. If your last click is on a pin, the stop links to it. For a ${TP.inline}, click only the destination and choose ${TP.label} when asked.`,
+  addStop: 'Click along the road; clicking a pin routes through it. End with Stop here or Enter. If your last click is on a pin, the stop links to it. For a teleport or other direct leg, click only the destination and pick that travel mode when asked.',
   redraw: 'Click along the road, in travel order, then choose Save road.',
   move: 'Drag pins to new positions. Each move saves when you let go.',
   measure: 'Click points on the map to measure. Backspace removes the last point; Esc ends.',
@@ -277,6 +349,11 @@ function wireChrome() {
   $('user-button').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
   document.addEventListener('click', (e) => { if (!$('user-menu').hidden && !e.target.closest('.menu')) toggleMenu(false); });
   $('dm-tools').addEventListener('click', (e) => { const b = e.target.closest('button[data-mode]'); if (b) setMode(b.dataset.mode); });
+  $('pc-view-btn').addEventListener('click', () => setPcView(true));
+  $('pc-view-badge').addEventListener('click', leavePcView);
+  document.querySelectorAll('#side-tabs [data-tab]').forEach((b) => b.addEventListener('click', () => {
+    state.sideTab = b.dataset.tab; writePref('sideTab', state.sideTab); renderSideTabs();
+  }));
   $('party-jump').addEventListener('click', jumpToParty);
   $('toggle-side').addEventListener('click', () => setSide($('app').classList.contains('side-closed')));
   wireSearch();
@@ -291,7 +368,7 @@ function wireChrome() {
     if (e.key !== 'Escape') return;
     if (!$('user-menu').hidden) toggleMenu(false);
     else if (state.mode !== 'select') setMode('select');
-    else if (state.selectedPinId) closeDetail();
+    else if (state.selectedPinId || state.selectedNpcId) closeDetail();
   });
   if (window.matchMedia('(max-width: 760px)').matches) setSide(false);
 }
@@ -400,11 +477,11 @@ function renderRoute() {
   if (!state.map) return;
   state.layers.route.clearLayers();
   if (!state.showRoute || !state.waypoints.length) return;
-  for (const seg of routeSegments(state.waypoints)) {
-    const teleport = seg.kind === 'teleport';
-    const pts = (teleport ? arcPoints(seg.from, seg.to) : smoothPath(seg.points)).map((p) => ll(p.x, p.y));
+  for (const seg of routeSegments(state.waypoints, (id) => modeOf(id).line)) {
+    const m = modeOf(seg.mode);
+    const pts = (seg.kind === 'arc' ? legPoints([seg.from, seg.to], 1, 'arc') : smoothPath(seg.points)).map((p) => ll(p.x, p.y));
     L.polyline(pts, { color: '#1f2a36', weight: 7, opacity: 0.55, interactive: false }).addTo(state.layers.route);
-    L.polyline(pts, { color: ROUTE_STYLES[seg.kind].color, weight: 3.5, dashArray: teleport ? '2 7' : '9 7', lineCap: 'round', interactive: false })
+    L.polyline(pts, { color: m.color, weight: 3.5, dashArray: DASHES[m.dash] ?? DASHES.dash, lineCap: 'round', interactive: false })
       .addTo(state.layers.route);
   }
   // Click targets: a wide invisible line over each leg, and the stop dots.
@@ -413,10 +490,7 @@ function renderRoute() {
   if (selecting) {
     state.waypoints.forEach((w, i) => {
       if (i === 0) return;
-      const prev = state.waypoints[i - 1];
-      const pts = isTeleport(w, i) ? arcPoints(prev, w)
-        : smoothPath([{ x: prev.x, y: prev.y }, ...(Array.isArray(w.path) ? w.path : []), { x: w.x, y: w.y }]);
-      L.polyline(pts.map((p) => ll(p.x, p.y)), { color: '#000', weight: 18, opacity: 0, className: 'route-hit' })
+      L.polyline(legPoints(state.waypoints, i, legMode(i).line).map((p) => ll(p.x, p.y)), { color: '#000', weight: 18, opacity: 0, className: 'route-hit' })
         .on('click', (e) => { L.DomEvent.stopPropagation(e); showLegPopup(i, e.latlng); })
         .addTo(state.layers.route);
     });
@@ -436,17 +510,17 @@ function showLegPopup(i, latlng) {
   const w = state.waypoints[i];
   if (!w) return;
   const prev = state.waypoints[i - 1];
-  const teleport = isTeleport(w, i);
-  const miles = i > 0 && !teleport ? legMiles(i) : 0;
+  const mode = i > 0 ? legMode(i) : null;
+  const miles = i > 0 ? legMiles(i) : 0;
   const rows = [
     ['Session date', w.sessionDate ? formatSessionDate(w.sessionDate) : 'not recorded'],
   ];
   if (i === 0) rows.push(['Route', 'Start of the route']);
-  else if (teleport) rows.push(['Travel', `${TP.label} (no overland distance)`]);
+  else if (isInstant(mode)) rows.push(['Travel', `${mode.label} (no travel time)`]);
   else {
-    rows.push(['Distance', `${fmtMiles(miles)} along the road`]);
-    const pace = (id) => TRAVEL_PACES.find((p) => p.id === id);
-    rows.push(['Travel time', ['normal', 'slow', 'fast'].map((id) => h('div', {}, `${fmtDays(miles, pace(id).milesPerDay)} at ${pace(id).label.toLowerCase()} pace`))]);
+    rows.push(['Travel', mode.label]);
+    rows.push(['Distance', `${fmtMiles(miles)} ${mode.line === 'arc' ? 'straight across' : 'along the way'}`]);
+    rows.push(['Travel time', modePaces(mode).map((p) => h('div', {}, `${fmtDays(miles, p.milesPerDay)}${modePaces(mode).length > 1 ? ` at ${p.label.toLowerCase()} pace` : ''}`))]);
   }
   const body = h('div', { class: 'leg-popup' },
     h('div', { class: 'leg-title' }, `Stop ${i + 1}: ${stopLabel(w)}`),
@@ -458,8 +532,7 @@ function showLegPopup(i, latlng) {
   state.layers.legHighlight ||= L.layerGroup().addTo(state.map);
   state.layers.legHighlight.clearLayers();
   if (prev) {
-    const pts = teleport ? arcPoints(prev, w)
-      : smoothPath([{ x: prev.x, y: prev.y }, ...(Array.isArray(w.path) ? w.path : []), { x: w.x, y: w.y }]);
+    const pts = legPoints(state.waypoints, i, mode.line);
     L.polyline(pts.map((p) => ll(p.x, p.y)), { color: '#ffffff', weight: 7, opacity: 0.5, interactive: false }).addTo(state.layers.legHighlight);
   }
   state.legPopup = { index: i };
@@ -562,15 +635,18 @@ function renderFilters() {
     if (base.length) children.push(h('div', { class: 'filter-group' }, h('p', { class: 'filter-group-name' }, 'Places'), base.map(typeRow)));
     if (rings.length) children.push(h('div', { class: 'filter-group' }, h('p', { class: 'filter-group-name' }, 'Affiliations (rings)'), rings.map(typeRow)));
   }
+  // Travel: the route on/off switch, then a legend line per travel mode.
+  // Players only have revealed modes (ones the route has used).
+  const modes = sortedModes();
+  const [first, ...others] = modes.length ? modes : [modeOf('road')];
+  const modeLabel = (m) => h('span', {}, m.label, isDM() && !m.revealed ? h('span', { class: 'muted-note' }, ' (unused; hidden from players)') : null);
   children.push(h('div', { class: 'filter-group' },
     h('p', { class: 'filter-group-name' }, 'Travel'),
     h('label', { class: 'check' },
       h('input', { type: 'checkbox', checked: state.showRoute, onchange: (e) => { state.showRoute = e.target.checked; writePref('showRoute', state.showRoute); renderRoute(); } }),
-      h('span', { class: 'swatch', html: `<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M2 16 L9 8 L13 13 L20 5" fill="none" stroke="${ROUTE_STYLES.road.color}" stroke-width="3" stroke-dasharray="4 3" stroke-linecap="round"/></svg>` }),
-      ROUTE_STYLES.road.label),
-    h('div', { class: 'check legend-only' },
-      h('span', { class: 'swatch', html: `<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M2 17 Q11 -1 20 17" fill="none" stroke="${ROUTE_STYLES.teleport.color}" stroke-width="3" stroke-dasharray="1 4" stroke-linecap="round"/></svg>` }),
-      ROUTE_STYLES.teleport.label)));
+      h('span', { class: 'swatch', html: modeSwatch(first) }),
+      modeLabel(first)),
+    others.map((m) => h('div', { class: 'check legend-only' }, h('span', { class: 'swatch', html: modeSwatch(m) }), modeLabel(m)))));
   if (isDM()) {
     const hiddenCount = [...state.pins.values()].filter((p) => p.visibility === 'hidden').length;
     children.push(h('div', { class: 'filter-group' },
@@ -588,25 +664,38 @@ function formatSessionDate(s) {
   return m ? formatDate(new Date(+m[1], +m[2] - 1, +m[3])) : (s || '');
 }
 
-// "By teleport" or "86 mi, about 3½ days" for the leg into stop i.
+// "By Harper teleport" or "86 mi, about 3½ days" for the leg into stop i.
 function legLine(w, i) {
   if (i === 0) return '';
-  if (isTeleport(w, i)) return `By ${TP.inline}`;
+  const mode = legMode(i);
+  if (isInstant(mode)) return `By ${mode.inline || mode.label}`;
   const miles = legMiles(i);
-  return `${fmtMiles(miles)}, about ${fmtDays(miles, NORMAL_PACE)}`;
+  const by = modeIdOf(w) === 'road' ? '' : ` by ${mode.inline || mode.label}`;
+  return `${fmtMiles(miles)}${by}, about ${fmtDays(miles, mainPace(mode))}`;
 }
 
+// Totals over the whole route: miles and days for modes with travel time
+// (each at its normal pace, or its only pace), and a count of the others.
 function renderRouteSummary() {
   const box = $('route-summary');
   if (!box) return;
   const legs = state.waypoints.length - 1;
   if (legs < 1) { box.hidden = true; return; }
   let miles = 0;
-  let teleports = 0;
-  state.waypoints.forEach((w, i) => { if (isTeleport(w, i)) teleports += 1; else miles += legMiles(i); });
-  box.textContent = `${fmtMiles(miles)} overland, about ${fmtDays(miles, NORMAL_PACE)} at normal pace`
-    + (teleports ? `, plus ${teleports} ${TP.inline}${teleports === 1 ? '' : 's'}` : '') + '.';
-  box.title = `Travel time at normal pace (${NORMAL_PACE} miles a day). Slow: ${fmtDays(miles, 18)}. Fast: ${fmtDays(miles, 30)}.`;
+  let days = 0;
+  const instant = new Map(); // mode id -> count
+  state.waypoints.forEach((w, i) => {
+    if (i === 0) return;
+    const mode = legMode(i);
+    if (isInstant(mode)) { instant.set(modeIdOf(w), (instant.get(modeIdOf(w)) || 0) + 1); return; }
+    const m = legMiles(i);
+    miles += m;
+    days += m / mainPace(mode);
+  });
+  const extras = [...instant].map(([id, n]) => { const m = modeOf(id); return `${n} ${m.inline || m.label}${n === 1 ? '' : 's'}`; });
+  box.textContent = `${fmtMiles(miles)} traveled, about ${fmtDaysValue(days)}`
+    + (extras.length ? `, plus ${extras.join(' and ')}` : '') + '.';
+  box.title = 'Each leg at its travel mode\'s normal pace (or its only pace).';
   box.hidden = false;
 }
 
@@ -641,14 +730,77 @@ function fmtMiles(m) {
   return `${m < 10 ? m.toFixed(1) : Math.round(m).toLocaleString()} mi`;
 }
 // Days at a pace, rounded to the half day (travel is planned in days, not hours).
-function fmtDays(miles, perDay) {
-  const d = Math.round((miles / perDay) * 2) / 2;
+function fmtDays(miles, perDay) { return fmtDaysValue(miles / perDay); }
+function fmtDaysValue(days) {
+  const d = Math.round(days * 2) / 2;
   return d < 0.5 ? 'under ½ day' : `${String(d).replace('.5', '½')} day${d > 1 ? 's' : ''}`;
 }
-const NORMAL_PACE = TRAVEL_PACES.find((p) => p.id === 'normal').milesPerDay;
 
-// Overland miles of the leg into stop i (0 for the first stop and teleports).
-function legMiles(i) { return legPixels(state.waypoints, i) * milesPerPixel(); }
+// ---------- travel modes ----------
+const DASHES = { dash: '9 7', dot: '2 7', solid: null };
+const SWATCH_DASH = { dash: '4 3', dot: '1 4', solid: null };
+const startingMode = (id) => STARTING_TRAVEL_MODES.find((m) => m.id === id);
+// A stop's mode, falling back to the built-in definitions (and to a plain
+// road line for a mode this person cannot read or that was deleted).
+function modeOf(id) {
+  const m = state.travelModes.get(id);
+  if (m) return { id, ...m };
+  const fallback = startingMode(id) || { ...startingMode('road'), label: 'Travel', inline: 'travel' };
+  return { ...fallback, id };
+}
+function legMode(i) { return modeOf(modeIdOf(state.waypoints[i] || {})); }
+function sortedModes() {
+  return [...state.travelModes.values()].sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99) || a.label.localeCompare(b.label));
+}
+// The paces a mode has, slow to fast: [{ id, label, milesPerDay }].
+function modePaces(mode) {
+  return TRAVEL_PACES.filter((p) => Number(mode?.paces?.[p.id]) > 0)
+    .map((p) => ({ ...p, milesPerDay: Number(mode.paces[p.id]) }));
+}
+const isInstant = (mode) => !modePaces(mode).length;
+function mainPace(mode) {
+  const ps = modePaces(mode);
+  return (ps.find((p) => p.id === 'normal') || ps[0])?.milesPerDay || 24;
+}
+function modeSwatch(m) {
+  const d = m.line === 'arc' ? 'M2 17 Q11 -1 20 17' : 'M2 16 L9 8 L13 13 L20 5';
+  const dash = SWATCH_DASH[m.dash];
+  return `<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="${d}" fill="none" stroke="${m.color}" stroke-width="3"${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/></svg>`;
+}
+
+// The DM's app creates the starting modes once, when the database has none.
+async function addStartingTravelModes() {
+  if (!isDM() || state.travelModes.size) return;
+  await attempt(async () => {
+    for (const { id, ...m } of STARTING_TRAVEL_MODES) await state.backend.saveTravelMode(id, m);
+  });
+}
+
+// Shows players a travel mode once a stop uses it, and an affiliation once it
+// is a visible link on a revealed NPC. Runs in the DM's app whenever the data
+// changes, so it also catches stops and NPCs saved before this existed.
+function syncReveals() {
+  if (!isDM()) return;
+  const want = [];
+  for (const w of state.waypoints) want.push(['travelModes', modeIdOf(w), state.travelModes.get(modeIdOf(w))]);
+  for (const n of state.npcs.values()) {
+    if (n.visibility !== 'public') continue;
+    for (const id of n.affiliationIds || []) want.push(['affiliations', id, state.affiliations.get(id)]);
+  }
+  for (const [col, id, doc] of want) {
+    const key = `${col}/${id}`;
+    if (!doc || doc.revealed || state.revealing.has(key)) continue;
+    state.revealing.add(key);
+    state.backend.reveal(col, id).catch(reportError).finally(() => state.revealing.delete(key));
+  }
+}
+
+// Miles of the leg into stop i (0 for the first stop and for travel modes
+// with no travel time, like teleports).
+function legMiles(i) {
+  const mode = legMode(i);
+  return i > 0 && !isInstant(mode) ? legPixels(state.waypoints, i, mode.line) * milesPerPixel() : 0;
+}
 
 function addMeasurePoint(p) {
   state.measure.points.push(p);
@@ -720,23 +872,23 @@ function wireSearch() {
       writePref('searchScope', state.search.scope);
       renderSearchResults();
     } }), label);
-  $('search-scope').replaceChildren(scopeBox('pins', 'Pins and notes'), scopeBox('stops', 'Route stops'));
+  $('search-scope').replaceChildren(scopeBox('pins', 'Pins and notes'), scopeBox('npcs', 'NPCs'), scopeBox('stops', 'Route stops'));
 }
 
 function resetSearch() {
   const s = state.search;
-  s.texts = null; s.loadedAt = 0; s.loading = null; s.generation += 1;
+  s.texts = null; s.npcTexts = null; s.loadedAt = 0; s.loading = null; s.generation += 1;
   renderSearchResults();
 }
 
-// Loads notes (and DM text for the DM) for every visible pin, at most once a minute.
+// Loads notes (and DM text for the DM) for every visible pin and NPC, at most once a minute.
 function ensureSearchTexts() {
   const s = state.search;
   if (!state.backend || !state.role || s.loading) return;
   if (s.texts && Date.now() - s.loadedAt < SEARCH_MAX_AGE_MS) return;
   const gen = s.generation;
-  s.loading = state.backend.readPinTexts([...state.pins.keys()], isDM())
-    .then((texts) => { if (gen === s.generation) { s.texts = texts; s.loadedAt = Date.now(); } })
+  s.loading = Promise.all([state.backend.readPinTexts([...state.pins.keys()], isDM()), state.backend.readNpcTexts([...state.npcs.keys()])])
+    .then(([texts, npcTexts]) => { if (gen === s.generation) { s.texts = texts; s.npcTexts = npcTexts; s.loadedAt = Date.now(); } })
     .catch(reportError)
     .finally(() => { if (gen === s.generation) { s.loading = null; renderSearchResults(); } });
   renderSearchResults();
@@ -794,11 +946,28 @@ function pinSearchFields(pin) {
   ];
 }
 
+function npcSearchFields(npc) {
+  const notes = npc.id === state.selectedNpcId ? state.npcNotes : state.search.npcTexts?.get(npc.id)?.notes || [];
+  const affs = npcLinks(npc, 'affiliations');
+  return [
+    { label: 'Name', text: npc.name },
+    { label: 'Description', text: npc.description || '' },
+    { label: 'Status', text: statusLabel(npc.status) },
+    { label: 'Affiliations', text: affs.filter((a) => !a.hidden).map((a) => a.item.name).join(', ') },
+    { label: 'Places', text: npcLinks(npc, 'pins').map((x) => x.item.name).join(', ') },
+    ...notes.map((n) => ({ label: `Note by ${n.authorName || n.authorEmail}`, text: n.text, also: n.authorName || n.authorEmail })),
+    ...(isDM() ? [
+      { label: 'Hidden affiliations', text: affs.filter((a) => a.hidden).map((a) => a.item.name).join(', ') },
+      { label: 'DM-only notes', text: npcSecret(npc.id).text || '' },
+    ] : []),
+  ];
+}
+
 function stopSearchFields(w, i) {
   return [
     { label: 'Stop', text: stopLabel(w) },
     { label: 'Date', text: w.sessionDate ? `${formatSessionDate(w.sessionDate)} ${w.sessionDate}` : '' },
-    { label: 'Travel', text: isTeleport(w, i) ? `${TP.label} ${TP.inline} teleport` : '' },
+    { label: 'Travel', text: i > 0 ? `${legMode(i).label} ${legMode(i).inline || ''}` : '' },
   ];
 }
 
@@ -819,6 +988,12 @@ function renderSearchResults() {
       if (m) results.push({ kind: 'pin', pin, m, rank: m.nameHit ? 0 : 1 });
     }
   }
+  if (s.scope.npcs) {
+    for (const npc of state.npcs.values()) {
+      const m = matchItem(npcSearchFields(npc), terms);
+      if (m) results.push({ kind: 'npc', npc, m, rank: m.nameHit ? 0 : 1 });
+    }
+  }
   if (s.scope.stops) {
     state.waypoints.forEach((w, i) => {
       const m = matchItem(stopSearchFields(w, i), terms);
@@ -827,13 +1002,14 @@ function renderSearchResults() {
   }
   results.sort((a, b) => a.rank - b.rank
     || (a.kind === 'stop' && b.kind === 'stop' ? b.i - a.i : 0)
-    || (a.pin && b.pin ? a.pin.name.localeCompare(b.pin.name) : 0));
+    || (a.kind !== b.kind ? (a.kind === 'pin' ? -1 : 1) : 0)
+    || ((a.pin || a.npc) && (b.pin || b.npc) ? (a.pin || a.npc).name.localeCompare((b.pin || b.npc).name) : 0));
 
   const parts = [];
-  if (!s.scope.pins && !s.scope.stops) parts.push('Tick Pins and notes or Route stops to search.');
+  if (!s.scope.pins && !s.scope.npcs && !s.scope.stops) parts.push('Tick at least one of Pins and notes, NPCs or Route stops to search.');
   else {
     parts.push(results.length ? `${results.length} result${results.length === 1 ? '' : 's'}` : 'No matches');
-    if (s.scope.pins && s.loading) parts.push('loading notes…');
+    if ((s.scope.pins || s.scope.npcs) && s.loading) parts.push('loading notes…');
   }
   status.textContent = parts.join(', ');
   status.hidden = false;
@@ -847,10 +1023,17 @@ function renderSearchResults() {
           r.pin.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden') : null),
         r.m.field ? h('span', { class: 'search-snippet' }, h('span', { class: 'search-field' }, `${r.m.field.label}${more}: `), snippet(r.m.field.text, terms)) : null));
     }
+    if (r.kind === 'npc') {
+      return h('li', {}, h('button', { type: 'button', class: 'search-hit', onclick: () => openNpc(r.npc.id) },
+        h('span', { class: 'search-title' },
+          h('span', { class: 'search-kind' }, 'NPC'), r.npc.name,
+          r.npc.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden') : null),
+        r.m.field ? h('span', { class: 'search-snippet' }, h('span', { class: 'search-field' }, `${r.m.field.label}${more}: `), snippet(r.m.field.text, terms)) : null));
+    }
     return h('li', {}, h('button', { type: 'button', class: 'search-hit', onclick: () => showStopFromSearch(r.w) },
       h('span', { class: 'search-title' }, h('span', { class: 'search-kind' }, `Stop ${r.i + 1}`), stopLabel(r.w)),
       h('span', { class: 'search-snippet' },
-        [r.w.sessionDate ? formatSessionDate(r.w.sessionDate) : '', isTeleport(r.w, r.i) ? TP.label : ''].filter(Boolean).join(' · '))));
+        [r.w.sessionDate ? formatSessionDate(r.w.sessionDate) : '', r.i > 0 && modeIdOf(r.w) !== 'road' ? legMode(r.i).label : ''].filter(Boolean).join(' · '))));
   }));
   if (results.length > SEARCH_LIMIT) list.append(h('li', { class: 'empty' }, `Showing the first ${SEARCH_LIMIT}. Add a word to narrow it down.`));
   list.hidden = false;
@@ -956,10 +1139,15 @@ async function saveRedraw() {
   }
 }
 
-// The first stop has no leg leading into it, so it is never a teleport.
-function isTeleport(w, index) { return index > 0 && w.travel === 'teleport'; }
+const TRAVEL_FIELD_HINT = 'Modes drawn as a direct arc go straight from the previous stop; any road points you clicked are dropped. A mode the party has not used before becomes visible to players with this stop.';
+const travelOptions = () => (state.travelModes.size ? sortedModes() : [modeOf('road')])
+  .map((m) => ({ value: m.id, label: `${m.label}${m.revealed ? '' : ' (first use: reveals it to players)'}` }));
 
-const TRAVEL_FIELD_HINT = 'A teleport is drawn as a dotted arc straight from the previous stop; any road points you clicked are dropped.';
+// Saving a stop with a mode players have not seen yet reveals the mode.
+function revealModeFor(travel) {
+  const m = state.travelModes.get(travel);
+  if (m && !m.revealed) attempt(() => state.backend.reveal('travelModes', travel));
+}
 
 async function addStop(pos, pin, path = []) {
   const vals = await formDialog({
@@ -969,15 +1157,16 @@ async function addStop(pos, pin, path = []) {
       { name: 'label', label: 'Place name', value: pin?.name || '', hint: pin ? 'Linked to this pin.' : 'Leave blank for an unnamed stop.' },
       { name: 'sessionDate', label: 'Session date', type: 'date', value: todayIso() },
       state.waypoints.length ? { name: 'travel', label: 'How the party got here', type: 'select', value: 'road', hint: TRAVEL_FIELD_HINT,
-        options: [{ value: 'road', label: 'Traveled (road, river, trail...)' }, { value: 'teleport', label: TP.label }] } : null,
+        options: travelOptions() } : null,
     ].filter(Boolean),
   });
   if (!vals) return; // keeps the drawn points so the DM can carry on
   const seq = (state.waypoints.length ? Math.max(...state.waypoints.map((w) => w.seq)) : 0) + 1;
-  const travel = vals.travel === 'teleport' ? 'teleport' : 'road';
+  const travel = vals.travel || 'road';
   try {
-    await state.backend.addWaypoint({ seq, x: pos.x, y: pos.y, path: travel === 'teleport' ? [] : path, travel,
+    await state.backend.addWaypoint({ seq, x: pos.x, y: pos.y, path: modeOf(travel).line === 'arc' ? [] : path, travel,
       label: vals.label, sessionDate: vals.sessionDate, pinId: pin?.id || null });
+    revealModeFor(travel);
     toast('Stop added.', 'ok');
     if (state.draft) { state.draft.points = []; renderDraft(); renderModeHint(); }
   } catch (err) {
@@ -988,10 +1177,8 @@ async function addStop(pos, pin, path = []) {
 async function editStop(w) {
   const index = state.waypoints.findIndex((x) => x.id === w.id);
   const bends = Array.isArray(w.path) ? w.path.length : 0;
-  const teleport = isTeleport(w, index);
-  const legNow = teleport ? TP.inline : bends ? `road with ${bends} bend point${bends === 1 ? '' : 's'}` : 'straight line';
-  const legOptions = [{ value: 'keep', label: 'Keep as is' }, { value: 'redraw', label: 'Redraw the road on the map' }, { value: 'straight', label: 'Make it a straight road' }];
-  if (!teleport) legOptions.push({ value: 'teleport', label: `Change to a ${TP.inline}` });
+  const current = modeIdOf(w);
+  const pathNow = modeOf(current).line === 'arc' ? 'direct arc' : bends ? `${bends} bend point${bends === 1 ? '' : 's'}` : 'straight line';
   const vals = await formDialog({
     title: 'Edit stop',
     submitLabel: 'Save stop',
@@ -999,7 +1186,10 @@ async function editStop(w) {
     fields: [
       { name: 'label', label: 'Place name', value: w.label || '' },
       { name: 'sessionDate', label: 'Session date', type: 'date', value: w.sessionDate || '' },
-      index > 0 ? { name: 'road', label: `Leg from the previous stop (now: ${legNow})`, type: 'select', value: 'keep', options: legOptions } : null,
+      index > 0 ? { name: 'travel', label: 'How the party got here', type: 'select', value: current, options: travelOptions(), hint: TRAVEL_FIELD_HINT } : null,
+      index > 0 ? { name: 'road', label: `Line from the previous stop (now: ${pathNow})`, type: 'select', value: 'keep',
+        options: [{ value: 'keep', label: 'Keep as is' }, { value: 'redraw', label: 'Redraw it on the map' }, { value: 'straight', label: 'Make it a straight line' }],
+        hint: 'Applies to modes that follow a drawn path.' } : null,
     ].filter(Boolean),
   });
   if (!vals) return;
@@ -1010,11 +1200,15 @@ async function editStop(w) {
     return;
   }
   const update = { label: vals.label, sessionDate: vals.sessionDate };
-  if (vals.road === 'straight') Object.assign(update, { path: [], travel: 'road' });
-  if (vals.road === 'redraw') update.travel = 'road';
-  if (vals.road === 'teleport') Object.assign(update, { path: [], travel: 'teleport' });
-  await attempt(() => state.backend.updateWaypoint(w.id, update), 'Stop saved.');
-  if (vals.road === 'redraw') {
+  const travel = vals.travel || current;
+  const arc = modeOf(travel).line === 'arc';
+  if (index > 0) update.travel = travel;
+  if (arc || vals.road === 'straight') update.path = [];
+  const redraw = vals.road === 'redraw' && !arc;
+  if (vals.road === 'redraw' && arc) toast('That travel mode is drawn as a direct arc, so there is no road to redraw.');
+  const saved = await attempt(() => state.backend.updateWaypoint(w.id, update).then(() => true), 'Stop saved.');
+  if (saved && index > 0) revealModeFor(travel);
+  if (redraw) {
     setMode('redraw', { points: [], redrawId: w.id });
     const prev = state.waypoints[index - 1];
     state.map?.flyToBounds(L.latLngBounds([ll(prev.x, prev.y), ll(w.x, w.y)]).pad(0.4), { duration: 0.6, maxZoom: state.fitZoom + 2 });
@@ -1029,7 +1223,7 @@ function openPin(id) {
     state.notes = [];
     state.dmText = '';
     state.noteDraft = '';
-    state.npcName = '';
+    state.selectedNpcId = null;
     state.selectedPinId = id;
     state.detailSubs.push(state.backend.watchNotes(id, (notes) => {
       state.notes = notes.sort((a, b) => noteTime(b) - noteTime(a));
@@ -1066,12 +1260,16 @@ function closeDetail() {
   state.detailSubs = [];
   const had = state.selectedPinId;
   state.selectedPinId = null;
+  const hadNpc = state.selectedNpcId;
+  state.selectedNpcId = null;
   $('detail').hidden = true;
   if (had) renderPins();
+  if (hadNpc) renderNpcList();
 }
 
 function renderDetail() {
   const panel = $('detail');
+  if (state.selectedNpcId) { renderNpcDetail(panel); return; }
   const pin = state.pins.get(state.selectedPinId);
   if (!pin) { panel.hidden = true; return; }
   const { base, rings } = typesOf(pin);
@@ -1086,8 +1284,8 @@ function renderDetail() {
       h('span', { class: 'note-author' }, n.authorName || n.authorEmail),
       h('span', {}, formatDate(n.createdAt) + (edited ? ' (edited)' : '')),
       h('span', { class: 'note-tools' },
-        mine ? h('button', { class: 'btn link', type: 'button', onclick: () => editNote(pin.id, n) }, 'Edit') : null,
-        mine || isDM() ? h('button', { class: 'btn link', type: 'button', onclick: () => deleteNote(pin.id, n) }, 'Delete') : null));
+        mine && !inPcView() ? h('button', { class: 'btn link', type: 'button', onclick: () => editNote(pin.id, n) }, 'Edit') : null,
+        (mine && !inPcView()) || isDM() ? h('button', { class: 'btn link', type: 'button', onclick: () => deleteNote(pin.id, n) }, 'Delete') : null));
   };
   const byKind = (k) => state.notes.filter((n) => noteKind(n) === k);
   const leads = byKind('lead').sort((a, b) => (a.status === 'done') - (b.status === 'done'));
@@ -1096,24 +1294,24 @@ function renderDetail() {
     const done = n.status === 'done';
     return h('li', { class: `note lead${done ? ' done' : ''}` },
       h('label', { class: 'lead-check', title: done ? 'Mark as still open' : 'Mark as followed up' },
-        h('input', { type: 'checkbox', checked: done, 'aria-label': done ? 'Followed up' : 'Open lead',
+        h('input', { type: 'checkbox', checked: done, disabled: inPcView(), 'aria-label': done ? 'Followed up' : 'Open lead',
           onchange: (e) => attempt(() => state.backend.setLeadStatus(pin.id, n.id, e.target.checked ? 'done' : 'open')) }),
         h('span', { class: 'note-text' }, n.text)),
       meta(n));
   });
+  // Entries from before NPCs were their own records. Shown until the DM
+  // converts them (menu > Convert "People met" to NPCs) and removes them.
   const personItems = byKind('npc').sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((n) => h('li', { class: 'note' },
     h('div', { class: 'npc-name' }, n.name || 'Unnamed'),
     h('div', { class: 'note-text' }, n.text),
     meta(n)));
+  const pinNpcs = npcsAtPin(pin.id);
   const noteItems = byKind('note').map((n) => h('li', { class: 'note' }, meta(n), h('div', { class: 'note-text' }, n.text)));
 
-  const kind = state.noteKind;
+  const kind = ADDABLE_KINDS.includes(state.noteKind) ? state.noteKind : 'note';
   const textarea = h('textarea', { rows: '3', maxlength: '4000', placeholder: NOTE_KINDS[kind].placeholder, 'aria-label': NOTE_KINDS[kind].label,
     oninput: (e) => { state.noteDraft = e.target.value; } });
   textarea.value = state.noteDraft;
-  const nameInput = kind === 'npc' ? h('input', { type: 'text', maxlength: '100', placeholder: 'Name', 'aria-label': 'Name',
-    oninput: (e) => { state.npcName = e.target.value; } }) : null;
-  if (nameInput) nameInput.value = state.npcName;
   const focusedTag = panel.contains(document.activeElement) ? document.activeElement.tagName : null;
 
   panel.replaceChildren(...[
@@ -1137,20 +1335,21 @@ function renderDetail() {
       h('button', { class: 'btn danger', type: 'button', onclick: () => deletePin(pin) }, 'Delete pin')) : null,
     h('h3', {}, 'Leads and rumors', leads.length ? h('span', { class: 'h-count' }, `${openLeads} open`) : null),
     leadItems.length ? h('ul', { class: 'notes' }, leadItems) : h('p', { class: 'muted' }, 'No leads yet.'),
-    h('h3', {}, 'People met'),
-    personItems.length ? h('ul', { class: 'notes' }, personItems) : h('p', { class: 'muted' }, 'Nobody recorded yet.'),
+    h('h3', {}, 'NPCs', pinNpcs.length ? h('span', { class: 'h-count' }, String(pinNpcs.length)) : null),
+    pinNpcs.length ? h('ul', { class: 'npc-links' }, pinNpcs.map(({ npc, hiddenLink }) => npcRow(npc, { hiddenLink }))) : h('p', { class: 'muted' }, 'No NPCs linked here.'),
+    isDM() ? h('div', { class: 'detail-actions' }, h('button', { class: 'btn small', type: 'button', onclick: () => editNpc(null, { pinId: pin.id }) }, 'New NPC here')) : null,
+    personItems.length ? h('h3', {}, 'People met (older entries)') : null,
+    personItems.length ? h('ul', { class: 'notes' }, personItems) : null,
     h('h3', {}, 'Party notes'),
     noteItems.length ? h('ul', { class: 'notes' }, noteItems) : h('p', { class: 'muted' }, 'No notes yet.'),
-    h('form', { class: 'note-form', onsubmit: (e) => { e.preventDefault(); addNote(pin.id); } },
+    inPcView() ? null : h('form', { class: 'note-form', onsubmit: (e) => { e.preventDefault(); addNote(pin.id); } },
       h('select', { 'aria-label': 'What to add', onchange: (e) => { state.noteKind = e.target.value; renderDetail(); } },
-        Object.entries(NOTE_KINDS).map(([k, v]) => h('option', { value: k, selected: k === kind }, v.label))),
-      nameInput,
+        ADDABLE_KINDS.map((k) => h('option', { value: k, selected: k === kind }, NOTE_KINDS[k].label))),
       textarea,
       h('div', {}, h('button', { class: 'btn primary', type: 'submit' }, NOTE_KINDS[kind].add))),
   ].filter(Boolean)); // replaceChildren would print null as text
   panel.hidden = false;
   if (focusedTag === 'TEXTAREA') textarea.focus();
-  else if (focusedTag === 'INPUT' && nameInput) nameInput.focus();
 }
 
 // What can be added to a pin. Stored in the pin's notes with a `kind` field;
@@ -1161,21 +1360,19 @@ const NOTE_KINDS = {
   npc: { label: 'Person met', add: 'Add person', placeholder: 'Who they are, what they wanted, how it went', noun: 'person' },
 };
 const noteKind = (n) => (NOTE_KINDS[n.kind] ? n.kind : 'note');
+// "Person met" entries can still be edited and deleted, but new people are NPCs.
+const ADDABLE_KINDS = ['note', 'lead'];
 
 async function addNote(pinId) {
-  const kind = state.noteKind;
+  const kind = ADDABLE_KINDS.includes(state.noteKind) ? state.noteKind : 'note';
   const text = state.noteDraft.trim();
-  const name = state.npcName.trim();
-  if (kind === 'npc' && !name) { toast('Give the person a name.'); return; }
   if (!text) { toast(`Write something before adding the ${NOTE_KINDS[kind].noun}.`); return; }
   const entry = { text, authorEmail: state.user.email, authorName: displayName(state.member, state.user.email) };
   if (kind !== 'note') entry.kind = kind;
   if (kind === 'lead') entry.status = 'open';
-  if (kind === 'npc') entry.name = name;
   try {
     await state.backend.addNote(pinId, entry);
     state.noteDraft = '';
-    state.npcName = '';
     renderDetail();
   } catch (err) {
     reportError(err); // the draft stays in the box so nothing is lost
@@ -1202,6 +1399,376 @@ async function deleteNote(pinId, note) {
   const noun = NOTE_KINDS[noteKind(note)].noun;
   if (!(await confirmDialog(`Delete this ${noun}? This cannot be undone.`, `Delete ${noun}`))) return;
   await attempt(() => state.backend.deleteNote(pinId, note.id), 'Deleted.');
+}
+
+// ---------- NPCs ----------
+// An NPC's public record holds the location and affiliation links players
+// may see; hidden links and the DM's notes are in npcSecrets (DM only).
+const npcSecret = (id) => state.npcSecrets.get(id) || {};
+const statusLabel = (id) => NPC_STATUSES.find((x) => x.id === id)?.label || 'Unknown';
+const byName = (a, b) => a.name.localeCompare(b.name);
+
+// NPCs linked to a pin: [{ npc, hiddenLink }]. Players get only shown links
+// on revealed NPCs (that is all they have); the DM also gets hidden links.
+function npcsAtPin(pinId) {
+  const out = [];
+  for (const npc of state.npcs.values()) {
+    if ((npc.pinIds || []).includes(pinId)) out.push({ npc, hiddenLink: false });
+    else if (isDM() && (npcSecret(npc.id).hiddenPinIds || []).includes(pinId)) out.push({ npc, hiddenLink: true });
+  }
+  return out.sort((a, b) => byName(a.npc, b.npc));
+}
+// [{ item, hidden }] for an NPC's pins or affiliations that this person can see.
+function npcLinks(npc, kind) {
+  const shown = kind === 'pins' ? npc.pinIds : npc.affiliationIds;
+  const hidden = isDM() ? (kind === 'pins' ? npcSecret(npc.id).hiddenPinIds : npcSecret(npc.id).hiddenAffiliationIds) : [];
+  const source = kind === 'pins' ? state.pins : state.affiliations;
+  return [...(shown || []).map((id) => ({ id, hidden: false })), ...(hidden || []).map((id) => ({ id, hidden: true }))]
+    .map(({ id, hidden: h2 }) => ({ item: source.get(id), hidden: h2 }))
+    .filter((x) => x.item)
+    .sort((a, b) => (a.item.name || '').localeCompare(b.item.name || ''));
+}
+function affChip({ item, hidden }) {
+  return h('span', { class: `aff-chip${hidden ? ' hidden-link' : ''}`, title: [item.description, hidden ? 'Hidden from players' : ''].filter(Boolean).join('\n') || null },
+    h('span', { class: 'aff-dot', style: `background:${item.color}` }), item.name, hidden ? ' (hidden)' : '');
+}
+function statusChip(npc) {
+  return h('span', { class: `status-chip status-${npc.status || 'unknown'}` }, statusLabel(npc.status));
+}
+
+function npcRow(npc, { hiddenLink = false } = {}) {
+  return h('li', { class: npc.id === state.selectedNpcId ? 'selected' : '' },
+    h('button', { class: 'npc-row', type: 'button', onclick: () => openNpc(npc.id) },
+      h('span', { class: 'npc-row-name' }, npc.name,
+        npc.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden') : null,
+        hiddenLink ? h('span', { class: 'search-hidden' }, 'hidden link') : null),
+      h('span', { class: 'npc-row-meta' }, statusChip(npc), npcLinks(npc, 'affiliations').map(affChip))));
+}
+
+function renderSideTabs() {
+  const tab = state.sideTab === 'npcs' ? 'npcs' : 'map';
+  document.querySelectorAll('#side-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  $('map-pane').hidden = tab !== 'map';
+  $('npc-pane').hidden = tab !== 'npcs';
+}
+
+function renderNpcList() {
+  const box = $('npc-pane');
+  if (!box || !state.role) return;
+  $('npc-tab-count').textContent = state.npcs.size ? String(state.npcs.size) : '';
+  const affs = [...state.affiliations.values()].sort(byName);
+  if (state.npcFilter && !state.affiliations.has(state.npcFilter)) state.npcFilter = '';
+  const list = [...state.npcs.values()]
+    .filter((n) => !state.npcFilter || npcLinks(n, 'affiliations').some((x) => x.item.id === state.npcFilter))
+    .sort(byName);
+  box.replaceChildren(...[
+    affs.length ? h('label', { class: 'npc-filter' }, 'Affiliation ',
+      h('select', { onchange: (e) => { state.npcFilter = e.target.value; renderNpcList(); } },
+        h('option', { value: '' }, 'All'),
+        affs.map((a) => h('option', { value: a.id, selected: a.id === state.npcFilter }, a.name)))) : null,
+    list.length ? h('ul', { class: 'npc-list' }, list.map((n) => npcRow(n)))
+      : h('p', { class: 'empty' }, state.npcs.size ? 'No NPCs with that affiliation.' : (isDM() ? 'No NPCs yet.' : 'The party has not met anyone yet.')),
+    isDM() ? h('div', { class: 'detail-actions' }, h('button', { class: 'btn primary small', type: 'button', onclick: () => editNpc(null) }, 'Add NPC')) : null,
+  ].filter(Boolean));
+}
+
+function openNpc(id) {
+  if (state.selectedNpcId !== id) {
+    state.detailSubs.forEach((u) => u());
+    state.detailSubs = [];
+    const hadPin = state.selectedPinId;
+    state.selectedPinId = null;
+    if (hadPin) renderPins();
+    state.npcNotes = [];
+    state.npcNoteDraft = '';
+    state.selectedNpcId = id;
+    state.detailSubs.push(state.backend.watchNpcNotes(id, (notes) => {
+      state.npcNotes = notes.sort((a, b) => noteTime(b) - noteTime(a));
+      renderDetail(); renderSearchResults();
+    }));
+  }
+  if (isPhone()) setSide(false);
+  renderDetail();
+  renderNpcList();
+}
+
+function noteMeta(n, onEdit, onDelete) {
+  const mine = n.authorEmail === state.user.email;
+  const edited = n.updatedAt && n.createdAt && noteTime({ createdAt: n.updatedAt }) - noteTime(n) > 60000;
+  return h('div', { class: 'note-meta' },
+    h('span', { class: 'note-author' }, n.authorName || n.authorEmail),
+    h('span', {}, formatDate(n.createdAt) + (edited ? ' (edited)' : '')),
+    h('span', { class: 'note-tools' },
+      mine && !inPcView() ? h('button', { class: 'btn link', type: 'button', onclick: onEdit }, 'Edit') : null,
+      (mine && !inPcView()) || isDM() ? h('button', { class: 'btn link', type: 'button', onclick: onDelete }, 'Delete') : null));
+}
+
+function renderNpcDetail(panel) {
+  const npc = state.npcs.get(state.selectedNpcId);
+  if (!npc) { panel.hidden = true; return; }
+  const secret = npcSecret(npc.id);
+  const places = npcLinks(npc, 'pins');
+  const noteItems = state.npcNotes.map((n) => h('li', { class: 'note' },
+    noteMeta(n, () => editNpcNote(npc.id, n), () => deleteNpcNote(npc.id, n)), h('div', { class: 'note-text' }, n.text)));
+  const textarea = h('textarea', { rows: '3', maxlength: '4000', placeholder: 'What the party learned about them', 'aria-label': 'Note',
+    oninput: (e) => { state.npcNoteDraft = e.target.value; } });
+  textarea.value = state.npcNoteDraft;
+  const refocus = panel.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA';
+  panel.replaceChildren(...[
+    h('div', { class: 'detail-head' },
+      h('h2', {}, npc.name),
+      h('button', { class: 'icon-btn', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closeDetail,
+        html: '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' })),
+    h('div', { class: 'badges' },
+      h('span', { class: 'badge' }, 'NPC'),
+      statusChip(npc),
+      npcLinks(npc, 'affiliations').map(affChip),
+      npc.visibility === 'hidden' ? h('span', { class: 'badge hidden-badge' }, 'Hidden from players') : null),
+    npc.description ? h('p', { class: 'desc' }, npc.description) : h('p', { class: 'muted' }, isDM() ? 'No description yet. Players see the description once the NPC is revealed.' : 'No description yet.'),
+    isDM() ? h('div', { class: 'dm-box' },
+      h('div', { class: 'dm-label' }, 'DM only'),
+      h('div', { class: 'dm-text' }, secret.text || 'Nothing written yet.')) : null,
+    isDM() ? h('div', { class: 'detail-actions' },
+      h('button', { class: 'btn', type: 'button', onclick: () => editNpc(npc) }, 'Edit NPC'),
+      h('button', { class: 'btn danger', type: 'button', onclick: () => deleteNpc(npc) }, 'Delete NPC')) : null,
+    h('h3', {}, 'Places'),
+    places.length ? h('ul', { class: 'npc-links' }, places.map(({ item: pin, hidden }) => h('li', {},
+      h('button', { class: 'npc-row', type: 'button', onclick: () => showPinFromSearch(pin.id) },
+        h('span', { class: 'npc-row-name' }, pin.name,
+          pin.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden pin') : null,
+          hidden ? h('span', { class: 'search-hidden' }, 'hidden link') : null)))))
+      : h('p', { class: 'muted' }, 'No places linked.'),
+    h('h3', {}, 'Party notes'),
+    noteItems.length ? h('ul', { class: 'notes' }, noteItems) : h('p', { class: 'muted' }, 'No notes yet.'),
+    inPcView() ? null : h('form', { class: 'note-form', onsubmit: (e) => { e.preventDefault(); addNpcNote(npc.id); } },
+      textarea,
+      h('div', {}, h('button', { class: 'btn primary', type: 'submit' }, 'Add note'))),
+  ].filter(Boolean));
+  panel.hidden = false;
+  if (refocus) textarea.focus();
+}
+
+async function addNpcNote(npcId) {
+  const text = state.npcNoteDraft.trim();
+  if (!text) { toast('Write something before adding the note.'); return; }
+  try {
+    await state.backend.addNpcNote(npcId, { text, authorEmail: state.user.email, authorName: displayName(state.member, state.user.email) });
+    state.npcNoteDraft = '';
+    renderDetail();
+  } catch (err) {
+    reportError(err); // the draft stays in the box
+  }
+}
+async function editNpcNote(npcId, note) {
+  const vals = await formDialog({ title: 'Edit note', fields: [{ name: 'text', label: 'Note', type: 'textarea', value: note.text, rows: 6 }] });
+  if (!vals || !vals.text) return;
+  await attempt(() => state.backend.updateNpcNote(npcId, note.id, { text: vals.text }), 'Saved.');
+}
+async function deleteNpcNote(npcId, note) {
+  if (!(await confirmDialog('Delete this note? This cannot be undone.', 'Delete note'))) return;
+  await attempt(() => state.backend.deleteNpcNote(npcId, note.id), 'Deleted.');
+}
+
+// DM: create or edit an NPC. `pinId` pre-links a new NPC to that pin.
+async function editNpc(npc, { pinId = null } = {}) {
+  const secret = npc ? npcSecret(npc.id) : {};
+  const pinOptions = [...state.pins.values()].sort(byName)
+    .map((p) => ({ value: p.id, label: p.visibility === 'hidden' ? `${p.name} (hidden pin)` : p.name }));
+  const affOptions = [...state.affiliations.values()].sort(byName)
+    .map((a) => ({ value: a.id, label: a.name, swatch: `<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="${a.color}"/></svg>` }));
+  const vals = await formDialog({
+    title: npc ? `Edit ${npc.name}` : 'New NPC',
+    submitLabel: npc ? 'Save NPC' : 'Add NPC',
+    fields: [
+      { name: 'name', label: 'Name', value: npc?.name || '', required: true },
+      { name: 'status', label: 'Status', type: 'select', value: npc?.status || NPC_STATUSES[0].id, options: NPC_STATUSES.map((x) => ({ value: x.id, label: x.label })) },
+      { name: 'visibility', label: 'Who can see this NPC', type: 'select', value: npc?.visibility || 'hidden',
+        options: [{ value: 'hidden', label: 'Hidden from players' }, { value: 'public', label: 'Visible to players' }],
+        hint: npc ? null : 'New NPCs start hidden. Reveal them when the party meets them.' },
+      { name: 'description', label: 'Description (what the party knows on meeting them; players see this)', type: 'textarea', value: npc?.description || '', rows: 4 },
+      { name: 'dmText', label: 'DM-only notes', type: 'textarea', value: secret.text || '', rows: 3 },
+      { name: 'places', label: 'Places', type: 'links', options: pinOptions,
+        value: { shown: npc ? npc.pinIds || [] : [pinId].filter(Boolean), hidden: secret.hiddenPinIds || [] },
+        hint: 'Tick each place they are tied to. "Hidden" keeps that link from players. Links to hidden pins stay invisible to players until the pin is revealed.' },
+      { name: 'affiliations', label: 'Affiliations', type: 'links', options: affOptions,
+        value: { shown: npc?.affiliationIds || [], hidden: secret.hiddenAffiliationIds || [] },
+        hint: affOptions.length ? 'An affiliation shown on a visible NPC becomes known to players.' : 'No affiliations yet: add them from the menu (NPC affiliations).' },
+    ],
+  });
+  if (!vals) return;
+  if (!vals.name) { toast('An NPC needs a name.', 'error'); return; }
+  const data = {
+    name: vals.name, status: vals.status, visibility: vals.visibility, description: vals.description,
+    pinIds: vals.places.shown, affiliationIds: vals.affiliations.shown,
+  };
+  const newSecret = {
+    text: vals.dmText, hiddenPinIds: vals.places.hidden, hiddenAffiliationIds: vals.affiliations.hidden,
+    sourceNotes: secret.sourceNotes || [],
+  };
+  const id = await attempt(() => state.backend.saveNpc(npc?.id || null, data, newSecret, state.user.email), npc ? 'NPC saved.' : 'NPC added.');
+  if (id) openNpc(id);
+}
+
+async function deleteNpc(npc) {
+  if (!(await confirmDialog(`Delete "${npc.name}" and all notes on them? This cannot be undone.`, 'Delete NPC'))) return;
+  closeDetail();
+  await attempt(() => state.backend.deleteNpc(npc.id), 'NPC deleted.');
+}
+
+// ---------- NPC affiliations (DM) ----------
+function affiliationUses(id) {
+  return [...state.npcs.values()].filter((n) => (n.affiliationIds || []).includes(id) || (npcSecret(n.id).hiddenAffiliationIds || []).includes(id)).length;
+}
+async function editAffiliation(aff) {
+  const vals = await formDialog({
+    title: aff ? `Edit ${aff.name}` : 'New affiliation',
+    submitLabel: aff ? 'Save' : 'Add affiliation',
+    fields: [
+      { name: 'name', label: 'Name', value: aff?.name || '', required: true },
+      { name: 'color', label: 'Color', type: 'color', value: aff?.color || '#5b6b7a' },
+      { name: 'description', label: 'Description (players see it once the affiliation is known)', type: 'textarea', value: aff?.description || '', rows: 3 },
+      { name: 'revealed', label: 'Known to players (ticked automatically when it shows on a visible NPC)', type: 'checkbox', value: aff?.revealed || false },
+    ],
+  });
+  if (!vals || !vals.name) return;
+  const id = aff?.id || state.backend.newId('affiliations');
+  await attempt(() => state.backend.saveAffiliation(id, { name: vals.name, color: vals.color, description: vals.description, revealed: vals.revealed }),
+    aff ? 'Affiliation saved.' : 'Affiliation added.');
+}
+async function deleteAffiliation(aff) {
+  const used = affiliationUses(aff.id);
+  const msg = used ? `"${aff.name}" is on ${used} NPC${used === 1 ? '' : 's'}; it disappears from them. Delete it?` : `Delete the affiliation "${aff.name}"?`;
+  if (!(await confirmDialog(msg, 'Delete'))) return;
+  await attempt(() => state.backend.deleteAffiliation(aff.id), 'Affiliation deleted.');
+}
+function openAffiliations() {
+  const body = h('div');
+  const render = () => {
+    const affs = [...state.affiliations.values()].sort(byName);
+    body.replaceChildren(
+      affs.length ? h('table', { class: 'table' },
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Players'), h('th', {}, 'NPCs'), h('th', {}, ''))),
+        h('tbody', {}, affs.map((a) => h('tr', {},
+          h('td', {}, h('span', { class: 'aff-dot', style: `background:${a.color}` })),
+          h('td', {}, a.name, a.description ? h('div', { class: 'hint' }, a.description) : null),
+          h('td', {}, a.revealed ? 'Known' : 'Not yet'),
+          h('td', {}, String(affiliationUses(a.id))),
+          h('td', { style: 'text-align:right;white-space:nowrap' },
+            h('button', { class: 'btn small', type: 'button', onclick: () => editAffiliation(a) }, 'Edit'), ' ',
+            h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteAffiliation(a) }, 'Delete')))))) :
+        h('p', { class: 'muted' }, 'No affiliations yet.'),
+      h('p', { class: 'hint' }, 'Players see an affiliation once it is a visible (not hidden) link on an NPC they can see, or when you tick "Known to players".'),
+      h('div', { class: 'detail-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => editAffiliation(null) }, 'Add affiliation')));
+  };
+  render();
+  const { dlg } = panelDialog('NPC affiliations', body, { wide: true });
+  trackDialog(dlg, render);
+}
+
+// ---------- travel modes (DM) ----------
+const modeUses = (id) => state.waypoints.filter((w, i) => i > 0 && modeIdOf(w) === id).length;
+async function editTravelMode(mode) {
+  const pace = (id) => mode?.paces?.[id] ?? null;
+  const vals = await formDialog({
+    title: mode ? `Edit ${mode.label}` : 'New travel mode',
+    submitLabel: mode ? 'Save' : 'Add travel mode',
+    fields: [
+      { name: 'label', label: 'Name (legend and menus)', value: mode?.label || '', required: true },
+      { name: 'inline', label: 'In a sentence: "By ___"', value: mode?.inline || '', hint: 'For example "ship" or "Harper teleport". Leave blank to use the name.' },
+      { name: 'color', label: 'Line color', type: 'color', value: mode?.color || '#2a7fb8' },
+      { name: 'line', label: 'Drawn as', type: 'select', value: mode?.line || 'path',
+        options: [{ value: 'path', label: 'A path you click along (road, river)' }, { value: 'arc', label: 'A direct arc between stops (teleport, flight, sea crossing)' }] },
+      { name: 'dash', label: 'Line style', type: 'select', value: mode?.dash || 'dash',
+        options: [{ value: 'dash', label: 'Dashed' }, { value: 'dot', label: 'Dotted' }, { value: 'solid', label: 'Solid' }] },
+      ...TRAVEL_PACES.map((p) => ({ name: `pace_${p.id}`, label: `${p.label} pace (miles a day)`, type: 'number', step: 'any', value: pace(p.id) })),
+      { name: 'sortOrder', label: 'Order in the legend', type: 'number', value: mode?.sortOrder ?? (state.travelModes.size + 1) },
+      { name: 'revealed', label: 'Visible to players (ticked automatically when a stop first uses it)', type: 'checkbox', value: mode?.revealed || false },
+    ],
+    intro: h('p', { class: 'hint' }, 'Fill in the paces this mode should show; leave the others blank. With no pace at all the leg has no distance or travel time, like a teleport.'),
+  });
+  if (!vals || !vals.label) return;
+  const paces = {};
+  for (const p of TRAVEL_PACES) { const v = vals[`pace_${p.id}`]; if (v > 0) paces[p.id] = v; }
+  const id = mode?.id || state.backend.newId('travelModes');
+  const data = { label: vals.label, inline: vals.inline || vals.label, color: vals.color, line: vals.line, dash: vals.dash, paces,
+    sortOrder: vals.sortOrder ?? 99, revealed: vals.revealed };
+  await attempt(() => state.backend.saveTravelMode(id, data), mode ? 'Travel mode saved.' : 'Travel mode added.');
+}
+async function deleteTravelMode(mode) {
+  if (mode.id === 'road') { toast('The road mode is the default for stops and cannot be deleted. Rename or restyle it instead.'); return; }
+  const used = modeUses(mode.id);
+  if (used) { toast(`"${mode.label}" is used by ${used} route stop${used === 1 ? '' : 's'}. Change those stops first.`, 'error'); return; }
+  if (!(await confirmDialog(`Delete the travel mode "${mode.label}"?`, 'Delete'))) return;
+  await attempt(() => state.backend.deleteTravelMode(mode.id), 'Travel mode deleted.');
+}
+function openTravelModes() {
+  const body = h('div');
+  const render = () => {
+    const modes = sortedModes();
+    body.replaceChildren(
+      h('table', { class: 'table' },
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Miles a day'), h('th', {}, 'Players'), h('th', {}, ''))),
+        h('tbody', {}, modes.map((m) => h('tr', {},
+          h('td', {}, h('span', { class: 'swatch', html: modeSwatch(m) })),
+          h('td', {}, m.label),
+          h('td', {}, isInstant(m) ? 'No travel time' : modePaces(m).map((p) => `${p.label.toLowerCase()} ${p.milesPerDay}`).join(', ')),
+          h('td', {}, m.revealed ? `Shown${modeUses(m.id) ? '' : ' (unused)'}` : 'Hidden until used'),
+          h('td', { style: 'text-align:right;white-space:nowrap' },
+            h('button', { class: 'btn small', type: 'button', onclick: () => editTravelMode(m) }, 'Edit'), ' ',
+            m.id === 'road' ? null : h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteTravelMode(m) }, 'Delete')))))),
+      h('p', { class: 'hint' }, 'Players see a travel mode in the legend only after a route stop uses it.'),
+      h('div', { class: 'detail-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => editTravelMode(null) }, 'Add travel mode')));
+  };
+  render();
+  const { dlg } = panelDialog('Travel modes', body, { wide: true });
+  trackDialog(dlg, render);
+}
+
+// ---------- converting old "person met" entries (DM, one time) ----------
+// Each entry becomes a hidden NPC linked to its pin, with the entry's text as
+// a party note under its original author. The NPC's secret record lists the
+// entry it came from, so running this again skips it, and the old entries
+// are removed only in a second, separate step.
+async function convertPeopleMet() {
+  toast('Reading notes on every pin…');
+  const texts = await attempt(() => state.backend.readPinTexts([...state.pins.keys()], true));
+  if (!texts) return;
+  const entries = [];
+  for (const [pinId, { notes }] of texts) for (const n of notes) if (noteKind(n) === 'npc') entries.push({ pinId, note: n });
+  const done = new Set([...state.npcSecrets.values()].flatMap((x) => x.sourceNotes || []));
+  const key = (e) => `${e.pinId}/${e.note.id}`;
+  const todo = entries.filter((e) => !done.has(key(e)));
+  const converted = entries.filter((e) => done.has(key(e)));
+  if (!entries.length) { toast('No "People met" entries left on any pin.', 'ok'); return; }
+
+  if (todo.length) {
+    const ok = await confirmDialog(
+      `${todo.length} "People met" entr${todo.length === 1 ? 'y' : 'ies'} not yet converted (${entries.length} in all). Each becomes a hidden NPC linked to its pin, with the entry's text as a party note by its original author. The old entries stay until you remove them. Convert now?`,
+      `Convert ${todo.length}`, { danger: false });
+    if (!ok) return;
+    const ops = [];
+    for (const e of todo) {
+      const id = state.backend.newId('npcs');
+      const n = e.note;
+      ops.push({ op: 'set', path: ['npcs', id], data: { name: (n.name || 'Unnamed').slice(0, 100), status: NPC_STATUSES[0].id, visibility: 'hidden',
+        description: '', pinIds: [e.pinId], affiliationIds: [], updatedBy: state.user.email } });
+      ops.push({ op: 'set', path: ['npcSecrets', id], data: { text: '', hiddenPinIds: [], hiddenAffiliationIds: [], sourceNotes: [key(e)] } });
+      const note = { text: n.text, authorEmail: n.authorEmail, authorName: n.authorName || n.authorEmail };
+      if (n.createdAt) note.createdAt = n.createdAt;
+      if (n.updatedAt) note.updatedAt = n.updatedAt;
+      ops.push({ op: 'set', path: ['npcs', id, 'notes', n.id], data: note });
+    }
+    if (!(await attempt(() => state.backend.applyOps(ops).then(() => true)))) return;
+    toast(`Converted ${todo.length}. Check the new NPCs (hidden, in the NPCs tab), merge any duplicates, then reveal them.`, 'ok');
+    state.sideTab = 'npcs'; writePref('sideTab', 'npcs'); renderSideTabs();
+    return;
+  }
+  const remove = await confirmDialog(
+    `All ${converted.length} "People met" entr${converted.length === 1 ? 'y has' : 'ies have'} been converted to NPCs. Remove the old entries from their pins? Do this once the NPCs look right. This cannot be undone (a backup can restore them).`,
+    `Remove ${converted.length}`);
+  if (!remove) return;
+  await attempt(() => state.backend.applyOps(converted.map((e) => ({ op: 'delete', path: ['pins', e.pinId, 'notes', e.note.id] }))),
+    'Old "People met" entries removed.');
 }
 
 // ---------- pin create / edit / delete ----------
@@ -1444,6 +2011,9 @@ async function restoreBackup() {
       row('From project', s.projectId),
       row('Pins', `${s.pins} (${s.hiddenPins} hidden), DM-only text on ${s.dmTexts}`),
       row('Notes / leads / people met', `${s.notes} / ${s.leads} / ${s.people}`),
+      row('NPCs', s.npcs == null ? 'not in file (current NPCs kept)' : `${s.npcs} (${s.hiddenNpcs} hidden), ${s.npcNotes} notes`),
+      row('Affiliations', s.affiliations == null ? 'not in file (current ones kept)' : s.affiliations),
+      row('Travel modes', s.travelModes == null ? 'not in file (current ones kept)' : s.travelModes),
       row('Route stops', s.stops),
       row('Pin types', s.pinTypes),
       row('Members in file', s.members),

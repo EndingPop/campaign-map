@@ -6,7 +6,7 @@ process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 
 const { initializeApp } = await import('firebase-admin/app');
 const { getFirestore, FieldValue } = await import('firebase-admin/firestore');
-const { STARTING_PIN_TYPES } = await import('../public/js/config.js');
+const { STARTING_PIN_TYPES, STARTING_TRAVEL_MODES } = await import('../public/js/config.js');
 const [RING_A, RING_B] = STARTING_PIN_TYPES.filter((t) => t.kind === 'ring').map((t) => t.id);
 
 initializeApp({ projectId: 'demo-map' });
@@ -45,8 +45,24 @@ batch.set(db.doc('pins/p1/notes/lead1'), seedNote({ kind: 'lead', status: 'open'
 batch.set(db.doc('pins/p1/notes/npc1'), seedNote({ kind: 'npc', name: 'Test innkeeper', text: 'Test person met here.', authorEmail: 'player@example.com', authorName: 'Test Hero (Test Player)' }));
 batch.set(db.doc('pins/p6/notes/seed1'), { text: 'Note on a hidden pin: players must not see this.', authorEmail: 'dm@example.com', authorName: 'Test DM', createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
 for (const [id, w] of Object.entries(waypoints)) batch.set(db.doc(`waypoints/${id}`), w);
+// Travel modes as the DM's app creates them; the teleport is revealed because w5 uses it.
+for (const { id, ...m } of STARTING_TRAVEL_MODES) batch.set(db.doc(`travelModes/${id}`), { ...m, revealed: true });
+batch.set(db.doc('travelModes/ship'), { label: 'Ship', inline: 'ship', color: '#2a7fb8', line: 'arc', dash: 'solid', paces: { normal: 96 }, revealed: false, sortOrder: 3 });
+batch.set(db.doc('affiliations/a1'), { name: 'Test guild', color: '#d4a017', description: 'Known to players.', revealed: true });
+batch.set(db.doc('affiliations/a2'), { name: 'Test cult', color: '#7a2e2e', description: 'Players must not see this.', revealed: false });
+const npcs = {
+  n1: [{ name: 'Test peddler', status: 'alive', visibility: 'public', description: 'Visible NPC.', pinIds: ['p2', 'p3'], affiliationIds: ['a1'] },
+    { text: 'Test DM note on a visible NPC.', hiddenPinIds: ['p6'], hiddenAffiliationIds: ['a2'], sourceNotes: [] }],
+  n2: [{ name: 'Test villain', status: 'unknown', visibility: 'hidden', description: 'Players must not see this NPC.', pinIds: [], affiliationIds: [] },
+    { text: '', hiddenPinIds: [], hiddenAffiliationIds: ['a2'], sourceNotes: [] }],
+};
+for (const [id, [n, secret]] of Object.entries(npcs)) {
+  batch.set(db.doc(`npcs/${id}`), { ...n, updatedAt: FieldValue.serverTimestamp(), updatedBy: 'seed' });
+  batch.set(db.doc(`npcSecrets/${id}`), secret);
+}
+batch.set(db.doc('npcs/n1/notes/s1'), seedNote({ text: 'Test note on an NPC.', authorEmail: 'player@example.com', authorName: 'Test Hero (Test Player)' }));
 batch.set(db.doc('settings/map'), { imagePath: 'map/map.jpg', imageWidth: 2576, imageHeight: 1667 });
 await batch.commit();
 
-console.log(`Seeded the local emulator: ${Object.keys(members).length} members, ${STARTING_PIN_TYPES.length} pin types, ${Object.keys(pins).length} pins, ${Object.keys(waypoints).length} route stops.`);
+console.log(`Seeded the local emulator: ${Object.keys(members).length} members, ${STARTING_PIN_TYPES.length} pin types, ${Object.keys(pins).length} pins, ${Object.keys(npcs).length} NPCs, ${Object.keys(waypoints).length} route stops.`);
 process.exit(0);

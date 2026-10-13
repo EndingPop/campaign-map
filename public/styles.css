@@ -332,3 +332,48 @@ textarea { resize: vertical; min-height: 70px; }
   .dm-tools button { padding: 7px 9px; font-size: 14px; }
   .add-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* ---------- side tabs and NPC list ---------- */
+.side-tabs { display: flex; gap: 4px; margin: 18px 0 14px; border-bottom: 1px solid var(--slate-3); }
+.side-tabs button {
+  border: 0; background: none; padding: 6px 10px; cursor: pointer; color: var(--mist);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.side-tabs button[aria-selected="true"] { color: var(--fog); border-bottom-color: var(--brass); font-weight: 600; }
+.tab-count { font-size: 12px; color: var(--mist); font-weight: 400; }
+.npc-filter { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--mist); margin-bottom: 8px; }
+.npc-filter select { width: auto; flex: 1; }
+.npc-list, .npc-links { list-style: none; padding: 0; margin: 0; }
+.npc-list li + li, .npc-links li + li { border-top: 1px solid var(--slate-2); }
+.npc-row { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 7px 4px; cursor: pointer; border-radius: var(--radius-sm); }
+.npc-row:hover, .npc-list li.selected .npc-row { background: var(--slate-2); }
+.npc-row-name { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-weight: 600; }
+.npc-row-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.status-chip, .aff-chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 1.5;
+  padding: 0 7px; border-radius: 999px; background: var(--slate-2); border: 1px solid var(--slate-3); font-weight: 400;
+}
+.status-dead { border-color: var(--danger); color: var(--danger); }
+.status-missing { border-color: var(--brass); color: var(--brass); }
+.status-unknown { color: var(--mist); }
+.aff-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.aff-chip.hidden-link { border-style: dashed; color: var(--mist); }
+.muted-note { color: var(--mist); font-size: 12px; }
+
+/* link lists in the NPC editor */
+.links { border: 1px solid var(--slate-3); border-radius: var(--radius-sm); padding: 6px 10px 8px; margin: 0; }
+.links legend { padding: 0 4px; }
+.links input[type="search"] { margin: 4px 0 6px; width: 100%; background: var(--slate-2); border: 1px solid var(--slate-3); border-radius: var(--radius-sm); padding: 5px 8px; }
+.link-rows { max-height: 220px; overflow-y: auto; }
+.link-row { display: flex; align-items: center; gap: 8px; }
+.field .link-row label.check { display: flex; margin: 0; color: var(--fog); font-size: 15px; }
+.field .link-row label.link-hidden { color: var(--mist); font-size: 13px; }
+.link-row > .check:first-child { flex: 1; min-width: 0; }
+.link-hidden { font-size: 13px; color: var(--mist); }
+
+/* ---------- PC view ---------- */
+.pc-view-badge {
+  font-size: 12px; padding: 2px 8px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--slate-3); color: var(--fog); border: 1px solid var(--mist);
+}
+.dm-tools .pc-view-btn { border-left: 1px solid var(--slate-3); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }

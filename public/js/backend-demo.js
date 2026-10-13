@@ -1,7 +1,7 @@
 // In-memory stand-in for backend-firebase.js, used with ?demo in the URL.
 // ?demo=dm (default), ?demo=player or ?demo=admin picks the role.
 // Nothing is saved; reloading the page resets the data.
-import { STARTING_PIN_TYPES, DEFAULT_MAP } from './config.js';
+import { STARTING_PIN_TYPES, STARTING_TRAVEL_MODES, DEFAULT_MAP } from './config.js';
 import { planRestore, reviveTimestamps } from './restore.js';
 
 // Demo pins use the first two ring types configured in site-config.js.
@@ -45,8 +45,30 @@ export function createDemoBackend(roleParam) {
         n1: { text: 'Rested here two nights. Cheap ale.', authorEmail: 'player2@example.com', authorName: 'Oskar (Second Player)', createdAt: now, updatedAt: now },
         l1: { kind: 'lead', status: 'open', text: 'A trader says the old mill road is watched at night.', authorEmail: 'player2@example.com', authorName: 'Oskar (Second Player)', createdAt: now, updatedAt: now },
         l2: { kind: 'lead', status: 'done', text: 'The smith wants iron from the hills.', authorEmail: 'player@example.com', authorName: 'Brynja (Demo Player)', createdAt: now, updatedAt: now },
+        // An entry from before NPCs were their own records; the DM menu converts it.
         p1: { kind: 'npc', name: 'Hedda the innkeeper', text: 'Friendly, nosy, keeps a ledger of every guest.', authorEmail: 'player@example.com', authorName: 'Brynja (Demo Player)', createdAt: now, updatedAt: now },
       },
+    },
+    travelModes: {
+      ...Object.fromEntries(STARTING_TRAVEL_MODES.map(({ id, ...m }) => [id, { ...m, revealed: true }])),
+      ship: { label: 'Ship', inline: 'ship', color: '#2a7fb8', line: 'arc', dash: 'solid', paces: { normal: 96 }, revealed: false, sortOrder: 3 },
+    },
+    affiliations: {
+      lantern: { name: 'Lantern Society', color: '#d4a017', description: 'Travelling scholars who trade in maps and rumors.', revealed: true },
+      ash: { name: 'Ashen Hand', color: '#7a2e2e', description: 'A smuggling ring. The party has not heard of it yet.', revealed: false },
+    },
+    npcs: {
+      n1: { name: 'Maro the peddler', status: 'alive', visibility: 'public', description: 'A cheerful peddler with a mule named Pepper. Sells a bit of everything.', pinIds: ['p2', 'p3'], affiliationIds: ['lantern'] },
+      n2: { name: 'Captain Ysolde', status: 'missing', visibility: 'public', description: 'Harbor master of Port Calder. Nobody has seen her for a week.', pinIds: ['p4'], affiliationIds: [] },
+      n3: { name: 'The veiled stranger', status: 'unknown', visibility: 'hidden', description: 'Watches the party from a distance.', pinIds: [], affiliationIds: [] },
+    },
+    npcSecrets: {
+      n1: { text: 'Carries messages for the Ashen Hand without knowing it.', hiddenPinIds: ['p6'], hiddenAffiliationIds: ['ash'], sourceNotes: [] },
+      n2: { text: 'Held in the smugglers\' cave.', hiddenPinIds: [], hiddenAffiliationIds: [], sourceNotes: [] },
+      n3: { text: 'Ysolde\'s sister.', hiddenPinIds: ['p6'], hiddenAffiliationIds: ['ash'], sourceNotes: [] },
+    },
+    npcNotes: {
+      n1: { a1: { text: 'Sold us rope at a fair price. Asked a lot of questions about where we were headed.', authorEmail: 'player@example.com', authorName: 'Brynja (Demo Player)', createdAt: now, updatedAt: now } },
     },
     waypoints: {
       w1: { seq: 1, x: 1450, y: 1050, label: 'First Town', pinId: 'p1', sessionDate: '2026-09-20' },
@@ -56,6 +78,25 @@ export function createDemoBackend(roleParam) {
       w5: { seq: 5, x: 2150, y: 1050, path: [], travel: 'teleport', label: 'Port Calder', pinId: 'p4', sessionDate: '2026-10-11' },
     },
   };
+
+  // Writes a list of { op, path, data } the way Firestore would, mapping
+  // subcollections onto the in-memory tables.
+  function applyOps(ops) {
+    for (const o of ops) {
+      const [col, id, sub, subId] = o.path;
+      const value = o.op === 'set' ? clone(o.data) : null;
+      if (col === 'settings') { if (value) data.settings = value; continue; }
+      if (sub) {
+        const table = col === 'pins' && sub === 'notes' ? data.notes : col === 'npcs' && sub === 'notes' ? data.npcNotes : null;
+        if (table) { if (value) (table[id] ||= {})[subId] = value; else if (table[id]) delete table[id][subId]; continue; }
+        if (col === 'pins' && sub === 'dm') { if (value) data.dm[id] = value.text; else delete data.dm[id]; continue; }
+        continue;
+      }
+      if (col === 'pins' && !value) { delete data.pins[id]; delete data.notes[id]; delete data.dm[id]; continue; }
+      if (col === 'npcs' && !value) { delete data.npcs[id]; delete data.npcNotes[id]; continue; }
+      if (value) (data[col] ||= {})[id] = value; else delete data[col]?.[id];
+    }
+  }
 
   const listeners = new Set();
   const emit = () => queueMicrotask(() => listeners.forEach((l) => l()));
@@ -78,6 +119,11 @@ export function createDemoBackend(roleParam) {
     watchPinTypes: (cb) => sub(() => cb(list(data.pinTypes))),
     watchPins: (dmView, cb) => sub(() => cb(list(data.pins).filter((p) => dmView || p.visibility === 'public'))),
     watchWaypoints: (cb) => sub(() => cb(list(data.waypoints))),
+    watchTravelModes: (dmView, cb) => sub(() => cb(list(data.travelModes).filter((m) => (dmView && isDM()) || m.revealed))),
+    watchAffiliations: (dmView, cb) => sub(() => cb(list(data.affiliations).filter((a) => (dmView && isDM()) || a.revealed))),
+    watchNpcs: (dmView, cb) => sub(() => cb(list(data.npcs).filter((n) => (dmView && isDM()) || n.visibility === 'public'))),
+    watchNpcSecrets: (cb) => sub(() => cb(isDM() ? list(data.npcSecrets) : [])),
+    watchNpcNotes: (npcId, cb) => sub(() => cb(list(data.npcNotes[npcId] || {}))),
     watchNotes: (pinId, cb) => sub(() => cb(list(data.notes[pinId] || {}))),
     watchDmText: (pinId, cb) => sub(() => cb(data.dm[pinId] || '')),
 
@@ -130,6 +176,55 @@ export function createDemoBackend(roleParam) {
       emit();
     },
 
+    async saveNpc(id, npc, secret, by) {
+      guard(isDM(), 'edit NPCs');
+      const nid = id || newId();
+      data.npcs[nid] = { ...clone(npc), updatedAt: new Date(), updatedBy: by };
+      data.npcSecrets[nid] = clone(secret);
+      emit();
+      return nid;
+    },
+    async deleteNpc(id) {
+      guard(isDM(), 'delete NPCs');
+      delete data.npcs[id]; delete data.npcSecrets[id]; delete data.npcNotes[id];
+      emit();
+    },
+    async addNpcNote(npcId, note) {
+      guard(note.authorEmail === me.email && (isDM() || data.npcs[npcId]?.visibility === 'public'), 'add this note');
+      (data.npcNotes[npcId] ||= {})[newId()] = { ...note, createdAt: new Date(), updatedAt: new Date() };
+      emit();
+    },
+    async updateNpcNote(npcId, noteId, fields) {
+      const n = data.npcNotes[npcId]?.[noteId];
+      guard(n && n.authorEmail === me.email, 'edit this note');
+      Object.assign(n, clone(fields), { updatedAt: new Date() });
+      emit();
+    },
+    async deleteNpcNote(npcId, noteId) {
+      const n = data.npcNotes[npcId]?.[noteId];
+      guard(n && (isDM() || n.authorEmail === me.email), 'delete this note');
+      delete data.npcNotes[npcId][noteId];
+      emit();
+    },
+    async readNpcTexts(npcIds) {
+      const out = new Map();
+      for (const id of npcIds) {
+        const npc = data.npcs[id];
+        if (!npc || (!isDM() && npc.visibility !== 'public')) continue;
+        out.set(id, { notes: list(data.npcNotes[id] || {}) });
+      }
+      return out;
+    },
+
+    async saveTravelMode(id, m) { guard(isDM(), 'edit travel modes'); data.travelModes[id] = clone(m); emit(); },
+    async deleteTravelMode(id) { guard(isDM(), 'edit travel modes'); delete data.travelModes[id]; emit(); },
+    async saveAffiliation(id, a) { guard(isDM(), 'edit affiliations'); data.affiliations[id] = clone(a); emit(); },
+    async deleteAffiliation(id) { guard(isDM(), 'edit affiliations'); delete data.affiliations[id]; emit(); },
+    async reveal(col, id) { guard(isDM(), 'reveal this'); if (data[col]?.[id]) data[col][id].revealed = true; emit(); },
+
+    newId: () => newId(),
+    async applyOps(ops) { guard(isDM(), 'make these changes'); applyOps(ops); emit(); },
+
     async addWaypoint(w) { guard(isDM(), 'edit the route'); data.waypoints[newId()] = clone(w); emit(); },
     async updateWaypoint(id, w) { guard(isDM(), 'edit the route'); Object.assign(data.waypoints[id], clone(w)); emit(); },
     async deleteWaypoint(id) { guard(isDM(), 'edit the route'); delete data.waypoints[id]; emit(); },
@@ -149,18 +244,7 @@ export function createDemoBackend(roleParam) {
       guard(['admin', 'dm'].includes(data.members[me.email]?.role), 'restore a backup');
       const ops = planRestore(backup, current, options);
       const revive = (d) => reviveTimestamps(d, (s, n) => new Date(s * 1000 + Math.floor(n / 1e6)));
-      for (const o of ops) {
-        const [col, id, sub, subId] = o.path;
-        const value = o.op === 'set' ? revive(o.data) : null;
-        if (col === 'settings') { if (value) data.settings = value; continue; }
-        if (col === 'pins' && sub === 'notes') {
-          if (value) (data.notes[id] ||= {})[subId] = value; else if (data.notes[id]) delete data.notes[id][subId];
-          continue;
-        }
-        if (col === 'pins' && sub === 'dm') { if (value) data.dm[id] = value.text; else delete data.dm[id]; continue; }
-        if (col === 'pins' && !value) { delete data.pins[id]; delete data.notes[id]; delete data.dm[id]; continue; }
-        if (value) data[col][id] = value; else delete data[col][id];
-      }
+      applyOps(ops.map((o) => (o.op === 'set' ? { ...o, data: revive(o.data) } : o)));
       onProgress(ops.length, ops.length);
       emit();
       return ops.length;
@@ -178,6 +262,8 @@ export function createDemoBackend(roleParam) {
         exportedAt: new Date().toISOString(), projectId: 'demo', settings: clone(data.settings),
         members: list(data.members), pinTypes: list(data.pinTypes), waypoints: list(data.waypoints),
         pins: list(data.pins).map((p) => ({ ...p, notes: list(data.notes[p.id] || {}), dmText: data.dm[p.id] || '' })),
+        npcs: list(data.npcs).map((n) => ({ ...n, notes: list(data.npcNotes[n.id] || {}) })),
+        npcSecrets: list(data.npcSecrets), affiliations: list(data.affiliations), travelModes: list(data.travelModes),
       });
     },
   };
