@@ -366,7 +366,8 @@ textarea { resize: vertical; min-height: 70px; }
 .links input[type="search"] { margin: 4px 0 6px; width: 100%; background: var(--slate-2); border: 1px solid var(--slate-3); border-radius: var(--radius-sm); padding: 5px 8px; }
 .link-rows { max-height: 220px; overflow-y: auto; }
 .link-row { display: flex; align-items: center; gap: 8px; }
-.field .link-row label.check { display: flex; margin: 0; color: var(--fog); font-size: 15px; }
+.field label.check { display: flex; margin: 4px 0 0; color: var(--fog); font-size: 15px; }
+.field .link-row label.check { margin: 0; }
 .field .link-row label.link-hidden { color: var(--mist); font-size: 13px; }
 .link-row > .check:first-child { flex: 1; min-width: 0; }
 .link-hidden { font-size: 13px; color: var(--mist); }

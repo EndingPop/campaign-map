@@ -2441,6 +2441,7 @@ function pickImage({ title, aspect = null, current = null }) {
     const status = h('p', { class: 'hint' }, 'Choose a file, or paste the address of an image on the web.');
     const fileInput = h('input', { type: 'file', accept: 'image/*', 'aria-label': 'Image file' });
     const urlInput = h('input', { type: 'url', placeholder: 'https://example.com/picture.png', 'aria-label': 'Image address' });
+    const copyBox = h('input', { type: 'checkbox' });
     const saveBtn = h('button', { type: 'button', class: 'btn primary', disabled: true }, 'Save image');
     const scale = () => s0 * z;
     const clamp = () => {
@@ -2485,6 +2486,7 @@ function pickImage({ title, aspect = null, current = null }) {
         zoom.disabled = false;
         saveBtn.disabled = false;
         clamp(); paint();
+        status.classList.remove('warn');
         status.textContent = `${nw} × ${nh} px. Drag the picture to move it; use the slider or the scroll wheel to zoom.`;
       };
       i.onerror = () => { status.textContent = kind === 'url' ? 'That address did not load as an image. Check it opens in a new tab, and that the site allows embedding.' : 'That file is not an image this browser can open.'; };
@@ -2501,17 +2503,42 @@ function pickImage({ title, aspect = null, current = null }) {
     frame.addEventListener('pointerup', () => { drag = null; });
     frame.addEventListener('pointercancel', () => { drag = null; });
     const close = (v) => { dlg.close(); dlg.remove(); resolve(v); };
+    // Another site's image can be copied only if that site allows it (CORS):
+    // reload it in CORS mode; the browser refuses the load, or the canvas
+    // export, when the site does not.
+    const corsCopy = (url) => new Promise((res, rej) => {
+      const i = new Image();
+      i.crossOrigin = 'anonymous';
+      i.referrerPolicy = 'no-referrer';
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('blocked'));
+      i.src = url;
+    });
+    const NO_COPY = 'That site does not allow other web pages to copy its images. Untick "Store a copy" to save it as a link, or download the image and upload the file.';
     saveBtn.addEventListener('click', async () => {
       if (!img) return;
-      if (source === 'url') { close({ url: urlInput.value.trim(), crop: crop() }); return; }
+      if (source === 'url' && !copyBox.checked) { close({ url: urlInput.value.trim(), crop: crop() }); return; }
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving…';
       try {
-        const out = aspect ? encodeImage(img, crop(), 512, 512 / aspect) : encodeImage(img, crop(), 2000, 2000);
+        let src = img;
+        if (source === 'url') {
+          try { src = await corsCopy(urlInput.value.trim()); } catch { throw new Error(NO_COPY); }
+        }
+        let out;
+        try {
+          out = aspect ? encodeImage(src, crop(), 512, 512 / aspect) : encodeImage(src, crop(), 2000, 2000);
+        } catch (err) {
+          if (err?.name === 'SecurityError') throw new Error(NO_COPY);
+          throw err;
+        }
         const imageId = await state.backend.saveImage(out);
         close({ imageId });
       } catch (err) {
-        reportError(err);
+        // Shown inside the dialog: a toast would sit behind it.
+        console.error(err);
+        status.textContent = explainError(err);
+        status.classList.add('warn');
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save image';
       }
@@ -2519,8 +2546,10 @@ function pickImage({ title, aspect = null, current = null }) {
     dlg.append(
       h('h2', {}, title),
       h('div', { class: 'field' }, h('label', {}, 'Upload a file (shrunk before upload, stored with the map)'), fileInput),
-      h('div', { class: 'field' }, h('label', {}, 'Or link an image on the web (not stored; anyone with the address can open it)'),
-        h('div', { class: 'add-row' }, urlInput, h('button', { type: 'button', class: 'btn', onclick: loadUrl }, 'Load'))),
+      h('div', { class: 'field' }, h('label', {}, 'Or use an image on the web'),
+        h('div', { class: 'add-row' }, urlInput, h('button', { type: 'button', class: 'btn', onclick: loadUrl }, 'Load')),
+        h('label', { class: 'check' }, copyBox, 'Store a copy with the map (keeps working if the original disappears; only works if that site allows copying)'),
+        h('p', { class: 'hint' }, 'Unticked, only the address is saved: anyone with it can open the image, and it breaks if the site removes it.')),
       h('div', { class: 'crop-wrap' }, frame),
       h('label', { class: 'crop-zoom' }, 'Zoom ', zoom),
       status,

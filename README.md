@@ -295,8 +295,11 @@ The app picks its database from the address it is opened on: the production host
 - **Portraits and handouts (DM):** **Set portrait** on an NPC, and **Add handout** on a pin or
   NPC. Upload a file (shrunk in the browser to a 512 px portrait or up to 2000 px for a
   handout, then stored in Firestore under the same visibility rules as everything else) or
-  link an image on the web (not stored, and anyone with the address can open it). Drag and
-  zoom to crop. A handout has a title, an optional transcription (searchable) and its own
+  use an image on the web by its address. A web image is saved as a link (not stored;
+  anyone with the address can open it, and it breaks if the site removes it) unless you
+  tick **Store a copy**, which stores it like an upload. Copying only works when that site
+  allows other pages to copy its images (CORS); if it does not, the dialog says so and you
+  can save it as a link or download and upload it instead. Drag and zoom to crop. A handout has a title, an optional transcription (searchable) and its own
   "players can see it" switch; players see it only when that is on and its pin or NPC is
   visible. Clicking a handout opens it full screen.
 - **In-game time (admin or DM):** account menu > **In-game time…** picks one scheme for the
