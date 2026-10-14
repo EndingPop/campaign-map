@@ -32,6 +32,8 @@ const npc = (over = {}) => ({
 const mode = (over = {}) => ({
   label: 'Ship', color: '#336699', line: 'arc', dash: 'solid', revealed: false, paces: { normal: 96 }, ...over,
 });
+const plan = (by, over = {}) => ({ name: 'Coast road', points: [{ x: 1, y: 1 }, { x: 5, y: 5 }], travel: 'road', createdBy: by, ...over });
+const handout = (over = {}) => ({ title: 'Letter', parentKind: 'pin', parentId: 'open', revealed: false, visibility: 'hidden', transcription: '', ...over });
 const aff = (over = {}) => ({ name: 'Harpers', color: '#1e5bc6', description: '', revealed: false, ...over });
 
 before(async () => {
@@ -68,6 +70,15 @@ beforeEach(async () => {
     await setDoc(doc(db, 'travelModes', 'airship'), mode({ label: 'Airship', revealed: false }));
     await setDoc(doc(db, 'affiliations', 'harpers'), aff({ revealed: true }));
     await setDoc(doc(db, 'affiliations', 'cult'), aff({ name: 'Cult of the Dragon', revealed: false }));
+    await setDoc(doc(db, 'presenter', 'state'), { seq: 1, live: false });
+    await setDoc(doc(db, 'plans', 'p1'), plan(PLAYER));
+    await setDoc(doc(db, 'dmPlans', 'd1'), plan(DM, { name: 'If they take the river' }));
+    await setDoc(doc(db, 'sessions', '2026-10-11'), { title: 'Session one' });
+    await setDoc(doc(db, 'sessions', '2026-10-11', 'notes', 's1'), note(PLAYER));
+    await setDoc(doc(db, 'sessionSecrets', '2026-10-11'), { text: 'Prep' });
+    await setDoc(doc(db, 'handouts', 'shown'), handout({ visibility: 'public', revealed: true }));
+    await setDoc(doc(db, 'handouts', 'secret'), handout({ title: 'Secret letter' }));
+    await setDoc(doc(db, 'images', 'img1'), { data: 'data:image/webp;base64,AAAA' });
   });
 });
 
@@ -260,6 +271,86 @@ describe('DM: NPCs, affiliations, travel modes', () => {
     await assertFails(setDoc(doc(db, 'affiliations', 'bad'), aff({ name: '' })));
     await assertFails(setDoc(doc(db, 'affiliations', 'bad'), aff({ description: 'x'.repeat(2001) })));
     await assertSucceeds(deleteDoc(doc(db, 'affiliations', 'zhent')));
+  });
+});
+
+describe('players: presenter, plans, sessions, handouts, images', () => {
+  test('read the presenter state but cannot write it', async () => {
+    const db = as(PLAYER);
+    await assertSucceeds(getDoc(doc(db, 'presenter', 'state')));
+    await assertFails(setDoc(doc(db, 'presenter', 'state'), { seq: 2 }));
+  });
+  test('draw, edit and delete party plans, including other players\' plans', async () => {
+    const db = as(PLAYER2);
+    await assertSucceeds(getDocs(collection(db, 'plans')));
+    await assertSucceeds(setDoc(doc(db, 'plans', 'p2'), plan(PLAYER2)));
+    await assertSucceeds(updateDoc(doc(db, 'plans', 'p1'), { name: 'Coast road, then north' }));
+    await assertFails(setDoc(doc(db, 'plans', 'p3'), plan(PLAYER2, { points: [{ x: 1, y: 1 }] })));
+    await assertFails(setDoc(doc(db, 'plans', 'p3'), plan(PLAYER2, { name: '' })));
+    await assertSucceeds(deleteDoc(doc(db, 'plans', 'p1')));
+  });
+  test('never read or write DM plans', async () => {
+    const db = as(PLAYER);
+    await assertFails(getDoc(doc(db, 'dmPlans', 'd1')));
+    await assertFails(getDocs(collection(db, 'dmPlans')));
+    await assertFails(setDoc(doc(db, 'dmPlans', 'd2'), plan(PLAYER)));
+  });
+  test('read sessions and add their own recap notes, but not DM session notes', async () => {
+    const db = as(PLAYER2);
+    await assertSucceeds(getDocs(collection(db, 'sessions')));
+    await assertSucceeds(getDocs(collection(db, 'sessions', '2026-10-11', 'notes')));
+    await assertSucceeds(setDoc(doc(db, 'sessions', '2026-10-11', 'notes', 's2'), note(PLAYER2)));
+    await assertFails(setDoc(doc(db, 'sessions', '2026-10-11', 'notes', 's3'), note(PLAYER)));
+    await assertFails(updateDoc(doc(db, 'sessions', '2026-10-11', 'notes', 's1'), { text: 'Hijack' }));
+    await assertFails(setDoc(doc(db, 'sessions', '2026-10-12'), { title: 'Mine' }));
+    await assertFails(getDoc(doc(db, 'sessionSecrets', '2026-10-11')));
+  });
+  test('read only public handouts, and cannot write handouts', async () => {
+    const db = as(PLAYER);
+    await assertSucceeds(getDoc(doc(db, 'handouts', 'shown')));
+    await assertSucceeds(getDocs(query(collection(db, 'handouts'), where('visibility', '==', 'public'))));
+    await assertFails(getDoc(doc(db, 'handouts', 'secret')));
+    await assertFails(getDocs(collection(db, 'handouts')));
+    await assertFails(updateDoc(doc(db, 'handouts', 'secret'), { visibility: 'public' }));
+  });
+  test('fetch an image by id, but cannot list or write images', async () => {
+    const db = as(PLAYER);
+    await assertSucceeds(getDoc(doc(db, 'images', 'img1')));
+    await assertFails(getDocs(collection(db, 'images')));
+    await assertFails(setDoc(doc(db, 'images', 'img2'), { data: 'data:image/webp;base64,AAAA' }));
+  });
+});
+
+describe('DM: presenter, plans, sessions, handouts, images, game dates', () => {
+  test('writes the presenter state and DM plans', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'presenter', 'state'), { seq: 2, live: true }));
+    await assertSucceeds(getDocs(collection(db, 'dmPlans')));
+    await assertSucceeds(setDoc(doc(db, 'dmPlans', 'd2'), plan(DM)));
+  });
+  test('manages sessions and their DM notes', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'sessions', '2026-10-18'), { title: 'Two' }));
+    await assertFails(setDoc(doc(db, 'sessions', 'next-week'), { title: 'Bad id' }));
+    await assertSucceeds(setDoc(doc(db, 'sessionSecrets', '2026-10-18'), { text: 'Prep' }));
+    await assertSucceeds(setDoc(doc(db, 'sessions', '2026-10-11', 'notes', 'r1'), note(PLAYER))); // restore under the original author
+  });
+  test('manages handouts and images, with shape checks', async () => {
+    const db = as(DM);
+    await assertSucceeds(getDocs(collection(db, 'handouts')));
+    await assertSucceeds(setDoc(doc(db, 'handouts', 'h3'), handout({ parentKind: 'npc', parentId: 'known', url: 'https://example.com/a.png' })));
+    await assertFails(setDoc(doc(db, 'handouts', 'bad'), handout({ parentKind: 'stop' })));
+    await assertFails(setDoc(doc(db, 'handouts', 'bad'), handout({ visibility: 'secret' })));
+    await assertSucceeds(getDocs(collection(db, 'images')));
+    await assertSucceeds(setDoc(doc(db, 'images', 'img3'), { data: 'data:image/webp;base64,AAAA', width: 512, height: 512 }));
+    await assertFails(setDoc(doc(db, 'images', 'big'), { data: 'x'.repeat(1000001) }));
+  });
+  test('saves in-game dates on stops', async () => {
+    const db = as(DM);
+    await assertSucceeds(setDoc(doc(db, 'waypoints', 'g1'), { seq: 9, x: 1, y: 1, gameDate: { year: 1491, period: 6, day: 15 } }));
+    await assertSucceeds(setDoc(doc(db, 'waypoints', 'g2'), { seq: 10, x: 1, y: 1, gameDay: 37, gameDateText: 'The night of the storm' }));
+    await assertFails(setDoc(doc(db, 'waypoints', 'g3'), { seq: 11, x: 1, y: 1, gameDate: { year: '1491', period: 6, day: 15 } }));
+    await assertFails(setDoc(doc(db, 'waypoints', 'g4'), { seq: 12, x: 1, y: 1, gameDate: { year: 1491, period: 6, day: 15, hour: 3 } }));
   });
 });
 

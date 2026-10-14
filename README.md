@@ -1,4 +1,4 @@
-# Campaign map (1.1)
+# Campaign map (1.2)
 
 A private, shared map for a tabletop campaign. The DM marks where the party has been and
 where it is now; everyone in the group can open the map, see the places the party knows
@@ -16,8 +16,17 @@ about, and add what they learned.
 - **Notes and leads** on each pin, written by any player and signed.
 - **NPCs** with a description, status, places, affiliations (each link can be hidden from
   players), party notes and DM-only notes, listed in their own tab.
-- **PC view:** a DM window that shows only what players see, for projecting at the table.
-- **Search** across pins, NPCs, notes and route stops, limited to what each person may see.
+- **PC view:** a DM window that shows only what players see, for projecting at the table,
+  and **presenter sync** so that window follows what the DM opens on the laptop.
+- **Planned routes** drawn by players or (privately) by the DM, with distance and time.
+- **Session log:** one entry per play date, with a shared recap and DM-only notes.
+- **Portraits and handouts:** NPC portraits and handout images (letters, posters, maps) on
+  pins and NPCs, uploaded or linked, with a crop step. Only the DM adds them.
+- **In-game time (optional):** stops can carry an in-game date on the Forgotten Realms,
+  Greyhawk, Golarion or Eberron calendar, a homebrew calendar, a campaign day, a session
+  number or free text.
+- **Search** across pins, NPCs, handouts, notes, sessions and route stops, limited to what
+  each person may see.
 - **Roles:** players, and a DM and an admin with the same full powers.
 - **Backup and restore** from the app.
 
@@ -142,10 +151,13 @@ With the emulators **stopped** (Ctrl+C in terminal 1):
 ```
 npm run test:rules
 ```
-This starts the Firestore emulator, runs 27 tests covering 85 allowed or refused actions
+This starts the Firestore emulator, runs 48 tests covering 187 allowed or refused actions
 across the roles (for example "a player cannot read a hidden pin" and "a player cannot
 edit someone else's note"), and stops the emulator. Every test should report `ok`. Run
 this after any change to `firestore.rules`.
+
+`npm run test:unit` runs the tests that need no emulator (calendar date math and backup
+restore planning). `npm run deploy:dev` runs both.
 
 ## 5. Firebase projects
 
@@ -262,10 +274,46 @@ The app picks its database from the address it is opened on: the production host
   window on the projector; bookmark the PC view address to open it that way. Leaving PC view
   (the **PC view** badge at the top, or the account menu) asks first, with **Stay in PC view**
   as the default button.
+- **Presenter sync:** **Present** in the DM toolbar makes the DM's window send what it shows
+  (the map area and the open pin, NPC, stop, session or handout) to every window that
+  follows it. PC view windows follow by default; any player can choose **Follow the DM's
+  screen** in the account menu (useful for a remote player), and the **Following DM** chip at
+  the top stops it. Only things players can see are sent: opening a hidden pin or NPC while
+  presenting leaves the other screens where they were. **Show players** on a pin, NPC, stop,
+  session or handout sends that one thing even when Present is off.
+- **Planned routes:** **Plan a route** (under Planned routes in the side panel) draws a
+  proposed path from the party's position, the same way as Add stop. Anyone can make,
+  edit and delete party plans; the DM can also keep plans only the DM sees. Clicking a plan
+  shows its distance and travel time for the chosen travel mode. **Party traveled this way**
+  (DM) turns a plan into a route stop and removes it. **Planned routes** in the legend shows
+  or hides them.
+- **Session log:** the **Sessions** tab lists one entry per play date. The DM's app creates
+  one for every session date used on the route; the DM can add others and give them titles.
+  A session shows that day's route stops (highlighted on the map), the places and NPCs at
+  them, the notes, leads and NPC notes written that day, a recap anyone can add to, and the
+  DM's private notes.
+- **Portraits and handouts (DM):** **Set portrait** on an NPC, and **Add handout** on a pin or
+  NPC. Upload a file (shrunk in the browser to a 512 px portrait or up to 2000 px for a
+  handout, then stored in Firestore under the same visibility rules as everything else) or
+  link an image on the web (not stored, and anyone with the address can open it). Drag and
+  zoom to crop. A handout has a title, an optional transcription (searchable) and its own
+  "players can see it" switch; players see it only when that is on and its pin or NPC is
+  visible. Clicking a handout opens it full screen.
+- **In-game time (admin or DM):** account menu > **In-game time…** picks one scheme for the
+  campaign: session date only (the default), an in-game calendar, campaign day, session
+  number or free text. Calendars come as presets (Harptos, Greyhawk's Common Year, Absalom
+  Reckoning, Galifar) or a custom one, and every part is editable: months and festivals one
+  per line, leap years, week length and weekday names. When adding a stop, the in-game date
+  is suggested from the previous stop plus the leg's travel days. The route list, the leg
+  popup (with days since the previous stop) and search show it. Switching between campaign
+  days and a calendar converts the stops, given the date of day 1. A copy can also set its
+  own calendar as `CALENDAR` in `site-config.js`.
 - **Search** (top of the side panel; the x clears it) finds words in pin names,
   descriptions, pin types, notes, leads and their authors; in NPC names, descriptions,
-  status, affiliations, places and notes; and in route stop names, dates and travel modes.
-  The **Pins and notes**, **NPCs** and **Route stops** boxes choose what it looks through. It
+  status, affiliations, places and notes; in handout titles and transcriptions; in session
+  titles and recaps; and in route stop names, dates, in-game dates and travel modes. The
+  **Pins and notes**, **NPCs**, **Route stops** and **Sessions** boxes choose what it looks
+  through. It
   only ever sees what the signed-in person can open: players get public pins and NPCs and
   their notes; the DM also gets hidden ones (marked "hidden"), hidden affiliations and
   DM-only text. Notes are loaded when search is first used and refreshed at most once a
@@ -276,7 +324,8 @@ The app picks its database from the address it is opened on: the production host
   (JSON)** from the account menu. The file name includes the site title and project.
   Firestore's managed backups are not in the free tier, so these files are the only copies:
   keep a few, and never commit them (they hold DM-only text and members' emails;
-  `.gitignore` excludes them).
+  `.gitignore` excludes them). Uploaded images are in the file too, so it grows with them:
+  tens of kilobytes per portrait, a few hundred per handout.
 - **Restoring:** account menu > **Restore from backup…** (admin or DM). Pick a backup file;
   the dialog shows when it was saved, which project it came from and what it holds. Restoring
   makes the map match the file: anything added since is deleted, and changed entries go back.
@@ -286,7 +335,7 @@ The app picks its database from the address it is opened on: the production host
   say) needs an extra confirmation. If the restore stops part-way (lost connection), run it
   again with the same file.
 - **Updating the site** takes two commands, so you can check dev in between:
-  - `npm run deploy:dev`: install, rules tests, dev rules, dev site.
+  - `npm run deploy:dev`: install, unit tests, rules tests, dev rules, dev site.
   - `npm run deploy:prod`: a pause to back up prod, then prod rules and prod site.
 
   Both check that your settings files and map exist, then show each command and wait:
@@ -333,12 +382,14 @@ private files when it runs, so the check itself publishes nothing.
 | `public/js/site-config.example.js` | Template for this copy's settings (`site-config.js`, not committed) |
 | `public/js/markers.js` | Pin and party marker drawing |
 | `public/js/route.js` | Route geometry: travel-mode segments, curve smoothing, leg lengths |
+| `public/js/calendar.js` | In-game calendars: presets and date math |
 | `public/js/restore.js` | Checks a backup file and plans the writes that restore it |
 | `public/js/ui.js` | Dialogs, messages and small helpers |
 | `public/vendor/` | Leaflet 1.9.4 and Firebase JS SDK 13.0.0, bundled; rebuild with `npm run vendor` |
 | `public/map/example-map.png` | Placeholder map for demo mode; your own map goes beside it (not committed) |
 | `firestore.rules` | Security rules |
-| `tests/rules.test.mjs` | Security rules tests |
+| `tests/rules.test.mjs` | Security rules tests (`npm run test:rules`) |
+| `tests/unit/` | Calendar and restore tests (`npm run test:unit`) |
 | `scripts/seed.mjs` | Test data for the local emulator only |
 | `scripts/serve.mjs` | Local web server |
 | `scripts/deploy.mjs` | Step-by-step deploy (`npm run deploy:dev`, `npm run deploy:prod`) |

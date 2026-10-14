@@ -119,7 +119,101 @@ service cloud.firestore {
         && (!('path' in request.resource.data)
             || (request.resource.data.path is list && request.resource.data.path.size() <= 300))
         && (!('travel' in request.resource.data)
-            || isShortString(request.resource.data.travel, 60));
+            || isShortString(request.resource.data.travel, 60))
+        // In-game time (see settings/map timeScheme), all optional:
+        // `gameDate` { year, period, day } on the campaign calendar,
+        // `gameDay` a campaign day or session number, `gameDateText` free text.
+        && (request.resource.data.get('gameDate', null) == null
+            || (request.resource.data.gameDate is map
+                && request.resource.data.gameDate.keys().hasOnly(['year', 'period', 'day'])
+                && request.resource.data.gameDate.year is int
+                && request.resource.data.gameDate.period is int
+                && request.resource.data.gameDate.day is int))
+        && (request.resource.data.get('gameDay', null) == null || request.resource.data.gameDay is number)
+        && isOptString(request.resource.data.get('gameDateText', null), 100);
+    }
+
+    // What the DM is showing on the projector (presenter sync). One
+    // document; the DM's app writes it, every member's app may follow it.
+    match /presenter/{docId} {
+      allow read: if member();
+      allow write: if isDM();
+    }
+
+    // Planned routes. Party plans: any member draws, edits or deletes them.
+    // DM plans live in their own collection, which players cannot read.
+    function validPlan() {
+      return isShortString(request.resource.data.name, 100)
+        && request.resource.data.points is list
+        && request.resource.data.points.size() >= 2
+        && request.resource.data.points.size() <= 300
+        && isShortString(request.resource.data.travel, 60)
+        && isShortString(request.resource.data.createdBy, 200);
+    }
+    match /plans/{planId} {
+      allow read, delete: if member();
+      allow create, update: if member() && validPlan();
+    }
+    match /dmPlans/{planId} {
+      allow read, delete: if isDM();
+      allow create, update: if isDM() && validPlan();
+    }
+
+    // Session log, one document per play date (id YYYY-MM-DD). The DM's app
+    // creates them; every member reads them and adds signed recap notes.
+    match /sessions/{sessionId} {
+      allow read: if member();
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && sessionId.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && isOptString(request.resource.data.get('title', null), 200);
+
+      match /notes/{noteId} {
+        function noteShape() {
+          return request.resource.data.keys().hasOnly(['text', 'authorEmail', 'authorName', 'createdAt', 'updatedAt'])
+            && isShortString(request.resource.data.text, 4000)
+            && isShortString(request.resource.data.authorEmail, 200);
+        }
+        function validNote() { return noteShape() && request.resource.data.authorEmail == email(); }
+        function adminRestore() { return isAdmin() && noteShape(); }
+        allow read: if member();
+        allow create: if member() && (validNote() || adminRestore());
+        allow update: if member() && ((resource.data.authorEmail == email() && validNote()) || adminRestore());
+        allow delete: if isDM() || (member() && resource.data.authorEmail == email());
+      }
+    }
+    match /sessionSecrets/{sessionId} {
+      allow read, write: if isDM();
+    }
+
+    // Handouts (letters, posters, sketches) on a pin or NPC. Only the DM
+    // adds them. `revealed` is the DM's switch; `visibility` is what players
+    // get, and the DM's app sets it to 'public' only while the handout is
+    // revealed AND its pin or NPC is visible to players.
+    match /handouts/{handoutId} {
+      allow read: if isDM() || (member() && resource.data.visibility == 'public');
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && isShortString(request.resource.data.title, 200)
+        && request.resource.data.parentKind in ['pin', 'npc']
+        && isShortString(request.resource.data.parentId, 200)
+        && request.resource.data.revealed is bool
+        && request.resource.data.visibility in ['public', 'hidden']
+        && isOptString(request.resource.data.get('transcription', null), 10000)
+        && isOptString(request.resource.data.get('url', null), 2000);
+    }
+
+    // Uploaded images (NPC portraits, handout images) as data URLs, one per
+    // document so lists never download them. Players may fetch an image only
+    // by its id, which appears only in an NPC or handout they can already
+    // read; they cannot list the collection.
+    match /images/{imageId} {
+      allow get: if member();
+      allow list: if isDM();
+      allow delete: if isDM();
+      allow create, update: if isDM()
+        && request.resource.data.data is string
+        && request.resource.data.data.size() <= 1000000;
     }
 
     // Ways the party travels (road, teleport, ship...). Players read only

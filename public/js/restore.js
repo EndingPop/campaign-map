@@ -9,12 +9,16 @@
 //   - documents that exist now but are not in the backup are deleted.
 // Members are only touched when asked, and the admin doing the restore is
 // never removed or changed, so they cannot lock themselves out.
-// NPCs, NPC secrets, affiliations and travel modes arrived in version 1.1.
-// A backup made before then has no lists for them, and a restore leaves
-// those collections as they are rather than emptying them.
+// NPCs, NPC secrets, affiliations and travel modes arrived in version 1.1;
+// sessions, plans, handouts and images in 1.2. A backup made before then has
+// no lists for them, and a restore leaves those collections as they are
+// rather than emptying them.
 
 const TIMESTAMP_TYPE = 'firestore/timestamp/1.0';
-const OPTIONAL_LISTS = ['npcs', 'npcSecrets', 'affiliations', 'travelModes'];
+const OPTIONAL_LISTS = ['npcs', 'npcSecrets', 'affiliations', 'travelModes',
+  'sessions', 'sessionSecrets', 'plans', 'dmPlans', 'handouts', 'images'];
+// Collections whose documents carry a `notes` list in the backup.
+const WITH_NOTES = ['npcs', 'sessions'];
 
 // Turns the JSON form of Firestore timestamps back into values the backend
 // can store. `makeTimestamp(seconds, nanoseconds)` is supplied by the backend.
@@ -50,9 +54,11 @@ export function parseBackup(text) {
     if (p.notes != null && !Array.isArray(p.notes)) throw new Error(`Pin "${p.name || p.id}" has malformed notes.`);
     if ((p.notes || []).some((n) => !n || typeof n.id !== 'string' || !n.id)) throw new Error(`Pin "${p.name || p.id}" has a note without an id.`);
   }
-  for (const n of data.npcs || []) {
-    if (n.notes != null && !Array.isArray(n.notes)) throw new Error(`NPC "${n.name || n.id}" has malformed notes.`);
-    if ((n.notes || []).some((x) => !x || typeof x.id !== 'string' || !x.id)) throw new Error(`NPC "${n.name || n.id}" has a note without an id.`);
+  for (const k of WITH_NOTES) {
+    for (const n of data[k] || []) {
+      if (n.notes != null && !Array.isArray(n.notes)) throw new Error(`${k} entry "${n.name || n.title || n.id}" has malformed notes.`);
+      if ((n.notes || []).some((x) => !x || typeof x.id !== 'string' || !x.id)) throw new Error(`${k} entry "${n.name || n.title || n.id}" has a note without an id.`);
+    }
   }
   return data;
 }
@@ -79,6 +85,10 @@ export function summarize(backup) {
     npcNotes: Array.isArray(backup.npcs) ? backup.npcs.reduce((sum, n) => sum + (n.notes || []).length, 0) : null,
     affiliations: Array.isArray(backup.affiliations) ? backup.affiliations.length : null,
     travelModes: Array.isArray(backup.travelModes) ? backup.travelModes.length : null,
+    sessions: Array.isArray(backup.sessions) ? backup.sessions.length : null,
+    plans: Array.isArray(backup.plans) ? backup.plans.length + (backup.dmPlans || []).length : null,
+    handouts: Array.isArray(backup.handouts) ? backup.handouts.length : null,
+    images: Array.isArray(backup.images) ? backup.images.length : null,
   };
 }
 
@@ -104,16 +114,17 @@ export function planRestore(backup, current, { members = false, keepEmail = '' }
     if (!keep) del(['pins', pin.id]);
   }
   const has = (k) => Array.isArray(backup[k]);
-  if (has('npcs')) {
-    const backupNpcs = new Map(backup.npcs.map((n) => [n.id, n]));
-    for (const npc of current.npcs || []) {
-      const keepNotes = ids(backupNpcs.get(npc.id)?.notes || []);
-      for (const n of npc.notes || []) if (!keepNotes.has(n.id)) del(['npcs', npc.id, 'notes', n.id]);
-      if (!backupNpcs.has(npc.id)) del(['npcs', npc.id]);
+  for (const col of WITH_NOTES.filter(has)) {
+    const keepDocs = new Map(backup[col].map((n) => [n.id, n]));
+    for (const d of current[col] || []) {
+      const keepNotes = ids(keepDocs.get(d.id)?.notes || []);
+      for (const n of d.notes || []) if (!keepNotes.has(n.id)) del([col, d.id, 'notes', n.id]);
+      if (!keepDocs.has(d.id)) del([col, d.id]);
     }
   }
+  const FLAT = ['npcSecrets', 'affiliations', 'travelModes', 'sessionSecrets', 'plans', 'dmPlans', 'handouts', 'images'];
   const flat = [['waypoints', backup.waypoints], ['pinTypes', backup.pinTypes],
-    ...['npcSecrets', 'affiliations', 'travelModes'].filter(has).map((k) => [k, backup[k]])];
+    ...FLAT.filter(has).map((k) => [k, backup[k]])];
   for (const [col, list] of flat) {
     const keep = ids(list);
     for (const d of current[col] || []) if (!keep.has(d.id)) del([col, d.id]);
@@ -134,12 +145,15 @@ export function planRestore(backup, current, { members = false, keepEmail = '' }
     for (const n of notes) set(['pins', id, 'notes', n.id], withoutId(n));
   }
   for (const w of backup.waypoints) set(['waypoints', w.id], withoutId(w));
-  for (const k of ['travelModes', 'affiliations', 'npcSecrets']) if (has(k)) for (const d of backup[k]) set([k, d.id], withoutId(d));
-  if (has('npcs')) {
-    for (const n of backup.npcs) {
-      const { id, notes = [], ...npc } = n;
-      set(['npcs', id], npc);
-      for (const x of notes) set(['npcs', id, 'notes', x.id], withoutId(x));
+  // Images before the NPCs and handouts that point at them.
+  for (const k of ['images', 'travelModes', 'affiliations', 'npcSecrets', 'sessionSecrets', 'plans', 'dmPlans', 'handouts']) {
+    if (has(k)) for (const d of backup[k]) set([k, d.id], withoutId(d));
+  }
+  for (const col of WITH_NOTES.filter(has)) {
+    for (const n of backup[col]) {
+      const { id, notes = [], ...rest } = n;
+      set([col, id], rest);
+      for (const x of notes) set([col, id, 'notes', x.id], withoutId(x));
     }
   }
   if (members) for (const m of backup.members) if (m.id !== keepLower) set(['members', m.id], withoutId(m));

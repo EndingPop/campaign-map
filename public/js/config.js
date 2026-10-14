@@ -57,6 +57,19 @@ export const STARTING_TRAVEL_MODES = [
     paces: {}, revealed: false, sortOrder: 2 },
 ];
 
+// How route stops mark in-game time (Map settings > Stop time). The DM picks
+// one per campaign; the real session date is always kept as well.
+export const TIME_SCHEMES = [
+  { id: 'session', label: 'Session date only' },
+  { id: 'calendar', label: 'In-game calendar' },
+  { id: 'day', label: 'Campaign day (Day 1, Day 2...)' },
+  { id: 'sessionNumber', label: 'Session number' },
+  { id: 'text', label: 'Free text' },
+];
+// A campaign's own calendar from site-config.js (same shape as the presets
+// in calendar.js), offered first when the DM picks a calendar.
+export const SITE_CALENDAR = site.CALENDAR || null;
+
 // What an NPC's status can be. The first is the default for a new NPC.
 export const NPC_STATUSES = [
   { id: 'alive', label: 'Alive' },

@@ -1,7 +1,7 @@
 // Step-by-step deploy, in two parts. Works on Windows, macOS and Linux
 // (it needs only Node.js, which the project already requires).
 //
-//   npm run deploy:dev    install, rules tests, rules and site to dev
+//   npm run deploy:dev    install, unit and rules tests, rules and site to dev
 //   npm run deploy:prod   back up prod, then rules and site to prod
 //
 // Add `-- --dry-run` (for example `npm run deploy:dev -- --dry-run`) to see
@@ -110,6 +110,7 @@ if (DEFAULT_MAP?.imagePath && !existsSync(`public/${DEFAULT_MAP.imagePath}`)) {
 
 if (target === 'dev') {
   await run('Install or update the project\'s tools (only needed if package.json changed; skip otherwise)', ['install']);
+  await run('Run the unit tests (calendar math, restore planning)', ['run', 'test:unit']);
   await run('Run the security rules tests against the local emulator', ['run', 'test:rules']);
   await run('Deploy the security rules to dev', ['run', 'deploy:rules:dev']);
   await run('Deploy the site to dev', ['run', 'deploy:site:dev']);

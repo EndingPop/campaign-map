@@ -9,8 +9,23 @@ import {
 } from '../vendor/firebase.js';
 import { planRestore, reviveTimestamps } from './restore.js';
 
-// Firestore allows 500 writes per batch; stay under it.
+// Batches stay under 400 writes and about 8 MB, below Firestore's 10 MiB
+// request limit (uploaded images can be close to 1 MB each).
 const RESTORE_BATCH = 400;
+const BATCH_BYTES = 8_000_000;
+function chunkOps(ops) {
+  const chunks = [];
+  let cur = [];
+  let bytes = 0;
+  for (const o of ops) {
+    const size = o.data ? JSON.stringify(o.data).length : 100;
+    if (cur.length && (cur.length >= RESTORE_BATCH || bytes + size > BATCH_BYTES)) { chunks.push(cur); cur = []; bytes = 0; }
+    cur.push(o);
+    bytes += size;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
 
 export function createFirebaseBackend(config, { emulators = false, onError = console.error } = {}) {
   const app = initializeApp(config);
@@ -55,6 +70,14 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
       watch(isDM ? collection(db, 'npcs') : query(collection(db, 'npcs'), where('visibility', '==', 'public')), cb),
     watchNpcSecrets: (cb) => watch(collection(db, 'npcSecrets'), cb),
     watchNpcNotes: (npcId, cb) => watch(collection(db, 'npcs', npcId, 'notes'), cb),
+    watchPresenter: (cb) => watch(doc(db, 'presenter', 'state'), cb, (s) => (s.exists() ? s.data() : null)),
+    watchPlans: (cb) => watch(collection(db, 'plans'), cb),
+    watchDmPlans: (cb) => watch(collection(db, 'dmPlans'), cb),
+    watchSessions: (cb) => watch(collection(db, 'sessions'), cb),
+    watchSessionNotes: (id, cb) => watch(collection(db, 'sessions', id, 'notes'), cb),
+    watchSessionSecret: (id, cb) => watch(doc(db, 'sessionSecrets', id), cb, (s) => (s.exists() ? s.data().text || '' : '')),
+    watchHandouts: (isDM, cb) =>
+      watch(isDM ? collection(db, 'handouts') : query(collection(db, 'handouts'), where('visibility', '==', 'public')), cb),
     watchWaypoints: (cb) => watch(collection(db, 'waypoints'), cb),
     watchNotes: (pinId, cb) => watch(collection(db, 'pins', pinId, 'notes'), cb),
     watchDmText: (pinId, cb) =>
@@ -134,6 +157,59 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
       return out;
     },
 
+    // Presenter sync: the DM's app writes, followers watch.
+    setPresenter: (data) => setDoc(doc(db, 'presenter', 'state'), { ...data, updatedAt: serverTimestamp() }),
+
+    // Planned routes; dm = true for the DM-only collection.
+    async savePlan(id, data, dm) {
+      const col = dm ? 'dmPlans' : 'plans';
+      const body = { ...data, updatedAt: serverTimestamp() };
+      if (id) { await setDoc(doc(db, col, id), body); return id; }
+      return (await addDoc(collection(db, col), body)).id;
+    },
+    deletePlan: (id, dm) => deleteDoc(doc(db, dm ? 'dmPlans' : 'plans', id)),
+
+    // Session log. Ids are the play date, YYYY-MM-DD.
+    saveSession: (id, data) => setDoc(doc(db, 'sessions', id), data),
+    async deleteSession(id) {
+      const batch = writeBatch(db);
+      (await getDocs(collection(db, 'sessions', id, 'notes'))).forEach((n) => batch.delete(n.ref));
+      batch.delete(doc(db, 'sessionSecrets', id));
+      batch.delete(doc(db, 'sessions', id));
+      await batch.commit();
+    },
+    setSessionSecret: (id, text) => setDoc(doc(db, 'sessionSecrets', id), { text }),
+    addSessionNote: (id, note) =>
+      addDoc(collection(db, 'sessions', id, 'notes'), { ...note, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }),
+    updateSessionNote: (id, noteId, fields) =>
+      updateDoc(doc(db, 'sessions', id, 'notes', noteId), { ...fields, updatedAt: serverTimestamp() }),
+    deleteSessionNote: (id, noteId) => deleteDoc(doc(db, 'sessions', id, 'notes', noteId)),
+    async readSessionTexts(ids) {
+      const out = new Map();
+      await Promise.all(ids.map(async (id) => {
+        try { out.set(id, { notes: listDocs(await getDocs(collection(db, 'sessions', id, 'notes'))) }); } catch { /* deleted since */ }
+      }));
+      return out;
+    },
+
+    // Handouts and images (DM writes; see the rules for who reads what).
+    async saveHandout(id, data) {
+      if (id) { await setDoc(doc(db, 'handouts', id), data); return id; }
+      return (await addDoc(collection(db, 'handouts'), { ...data, createdAt: serverTimestamp() })).id;
+    },
+    deleteHandout: (id) => deleteDoc(doc(db, 'handouts', id)),
+    setHandoutVisibility: (id, visibility) => updateDoc(doc(db, 'handouts', id), { visibility }),
+    async saveImage(data) {
+      const ref = doc(collection(db, 'images'));
+      await setDoc(ref, { ...data, createdAt: serverTimestamp() });
+      return ref.id;
+    },
+    async getImage(id) {
+      const s = await getDoc(doc(db, 'images', id));
+      return s.exists() ? s.data().data : null;
+    },
+    deleteImage: (id) => deleteDoc(doc(db, 'images', id)),
+
     saveTravelMode: (id, data) => setDoc(doc(db, 'travelModes', id), data),
     deleteTravelMode: (id) => deleteDoc(doc(db, 'travelModes', id)),
     saveAffiliation: (id, data) => setDoc(doc(db, 'affiliations', id), data),
@@ -146,9 +222,9 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
     // Used to convert old "person met" entries into NPCs.
     newId: (col) => doc(collection(db, col)).id,
     async applyOps(ops) {
-      for (let i = 0; i < ops.length; i += RESTORE_BATCH) {
+      for (const chunk of chunkOps(ops)) {
         const batch = writeBatch(db);
-        for (const o of ops.slice(i, i + RESTORE_BATCH)) {
+        for (const o of chunk) {
           const ref = doc(db, ...o.path);
           if (o.op === 'delete') batch.delete(ref); else batch.set(ref, o.data);
         }
@@ -177,14 +253,16 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
     async restoreAll(backup, current, options, onProgress = () => {}) {
       const ops = planRestore(backup, current, options);
       const revive = (data) => reviveTimestamps(data, (s, n) => new Timestamp(s, n));
-      for (let i = 0; i < ops.length; i += RESTORE_BATCH) {
+      let done = 0;
+      for (const chunk of chunkOps(ops)) {
         const batch = writeBatch(db);
-        for (const o of ops.slice(i, i + RESTORE_BATCH)) {
+        for (const o of chunk) {
           const ref = doc(db, ...o.path);
           if (o.op === 'delete') batch.delete(ref); else batch.set(ref, revive(o.data));
         }
         await batch.commit();
-        onProgress(Math.min(i + RESTORE_BATCH, ops.length), ops.length);
+        done += chunk.length;
+        onProgress(done, ops.length);
       }
       return ops.length;
     },
@@ -200,6 +278,8 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
       }
       const npcs = await all(['npcs']);
       for (const n of npcs) n.notes = await all(['npcs', n.id, 'notes']);
+      const sessions = await all(['sessions']);
+      for (const x of sessions) x.notes = await all(['sessions', x.id, 'notes']);
       const settings = await getDoc(doc(db, 'settings', 'map'));
       return {
         exportedAt: new Date().toISOString(),
@@ -213,6 +293,12 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
         npcSecrets: await all(['npcSecrets']),
         affiliations: await all(['affiliations']),
         travelModes: await all(['travelModes']),
+        sessions,
+        sessionSecrets: await all(['sessionSecrets']),
+        plans: await all(['plans']),
+        dmPlans: await all(['dmPlans']),
+        handouts: await all(['handouts']),
+        images: await all(['images']),
       };
     },
   };

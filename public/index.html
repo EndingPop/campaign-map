@@ -30,6 +30,8 @@
         <span id="party-label">Party position not set</span>
       </button>
       <span class="spacer"></span>
+      <button id="present-chip" class="status-chip-btn presenting" type="button" title="Your view is shown on screens following you. Click to stop presenting." hidden>Presenting</button>
+      <button id="follow-chip" class="status-chip-btn" type="button" title="This window follows what the DM shows. Click to stop following." hidden>Following DM</button>
       <button id="pc-view-badge" class="pc-view-badge" type="button" title="This window shows only what players see. Click to leave PC view." hidden>PC view</button>
       <span id="env-badge" class="env-badge" hidden></span>
       <div class="menu">
@@ -57,6 +59,7 @@
       <div id="side-tabs" class="side-tabs" role="tablist" aria-label="Side panel">
         <button type="button" role="tab" data-tab="map" aria-controls="map-pane" aria-selected="true">Map and route</button>
         <button type="button" role="tab" data-tab="npcs" aria-controls="npc-pane" aria-selected="false">NPCs <span id="npc-tab-count" class="tab-count"></span></button>
+        <button type="button" role="tab" data-tab="sessions" aria-controls="session-pane" aria-selected="false">Sessions <span id="session-tab-count" class="tab-count"></span></button>
       </div>
       <div id="map-pane" role="tabpanel">
         <section class="side-section">
@@ -68,8 +71,14 @@
           <p id="route-summary" class="route-summary" hidden></p>
           <ol id="route-list" class="route-list" reversed></ol>
         </section>
+        <section class="side-section">
+          <h2>Planned routes</h2>
+          <ul id="plan-list" class="route-list plan-list"></ul>
+          <button id="plan-btn" class="btn small" type="button">Plan a route</button>
+        </section>
       </div>
       <section id="npc-pane" class="side-section npc-pane" role="tabpanel" hidden></section>
+      <section id="session-pane" class="side-section npc-pane" role="tabpanel" hidden></section>
     </aside>
 
     <div id="map" class="map" aria-label="Campaign map"></div>
@@ -81,9 +90,11 @@
       <button type="button" data-mode="addPin" aria-pressed="false">Add pin</button>
       <button type="button" data-mode="addStop" aria-pressed="false">Add stop</button>
       <button type="button" data-mode="move" aria-pressed="false">Move pins</button>
-      <button id="pc-view-btn" type="button" class="pc-view-btn" title="Switch this window to what players see, for projecting at the table">PC view</button>
+      <button id="present-btn" type="button" class="pc-view-btn" aria-pressed="false" title="Send what this window shows to PC view windows (and players following you)">Present</button>
+      <button id="pc-view-btn" type="button" title="Switch this window to what players see, for projecting at the table">PC view</button>
     </nav>
     <div id="mode-hint" class="mode-hint" role="status" hidden></div>
+    <div id="viewer" class="viewer" hidden></div>
   </div>
 
   <div id="toast" class="toast" role="status" hidden></div>

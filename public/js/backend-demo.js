@@ -13,6 +13,12 @@ const ROLE_USERS = {
   player: { email: 'player@example.com', displayName: 'Demo Player' },
 };
 
+// A plain SVG stand-in for uploaded images, so the demo needs no files.
+function demoImage(bg, fg, text) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800"><rect width="600" height="800" fill="${bg}"/><rect x="30" y="30" width="540" height="740" fill="none" stroke="${fg}" stroke-width="6"/><text x="300" y="430" font-family="Georgia, serif" font-size="${text.length > 2 ? 110 : 320}" text-anchor="middle" fill="${fg}">${text}</text></svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
 let counter = 0;
 const newId = () => `demo${Date.now().toString(36)}${(counter++).toString(36)}`;
 const clone = (v) => structuredClone(v);
@@ -58,7 +64,7 @@ export function createDemoBackend(roleParam) {
       ash: { name: 'Ashen Hand', color: '#7a2e2e', description: 'A smuggling ring. The party has not heard of it yet.', revealed: false },
     },
     npcs: {
-      n1: { name: 'Maro the peddler', status: 'alive', visibility: 'public', description: 'A cheerful peddler with a mule named Pepper. Sells a bit of everything.', pinIds: ['p2', 'p3'], affiliationIds: ['lantern'] },
+      n1: { name: 'Maro the peddler', status: 'alive', visibility: 'public', description: 'A cheerful peddler with a mule named Pepper. Sells a bit of everything.', pinIds: ['p2', 'p3'], affiliationIds: ['lantern'], portrait: { imageId: 'img-maro' } },
       n2: { name: 'Captain Ysolde', status: 'missing', visibility: 'public', description: 'Harbor master of Port Calder. Nobody has seen her for a week.', pinIds: ['p4'], affiliationIds: [] },
       n3: { name: 'The veiled stranger', status: 'unknown', visibility: 'hidden', description: 'Watches the party from a distance.', pinIds: [], affiliationIds: [] },
     },
@@ -66,6 +72,33 @@ export function createDemoBackend(roleParam) {
       n1: { text: 'Carries messages for the Ashen Hand without knowing it.', hiddenPinIds: ['p6'], hiddenAffiliationIds: ['ash'], sourceNotes: [] },
       n2: { text: 'Held in the smugglers\' cave.', hiddenPinIds: [], hiddenAffiliationIds: [], sourceNotes: [] },
       n3: { text: 'Ysolde\'s sister.', hiddenPinIds: ['p6'], hiddenAffiliationIds: ['ash'], sourceNotes: [] },
+    },
+    presenter: null,
+    plans: {
+      pl1: { name: 'Coast road to Port Calder', points: [{ x: 2150, y: 1050 }, { x: 2230, y: 1180 }, { x: 2300, y: 1350 }], travel: 'road', createdBy: 'player@example.com', createdByName: 'Brynja (Demo Player)' },
+    },
+    dmPlans: {
+      dp1: { name: 'If they follow the smugglers', points: [{ x: 2150, y: 1050 }, { x: 1980, y: 1250 }, { x: 1750, y: 1250 }], travel: 'road', createdBy: 'dm@example.com', createdByName: 'Demo DM' },
+    },
+    sessions: {
+      '2026-09-20': { title: 'The road begins' },
+      '2026-09-27': { title: '' },
+      '2026-10-04': { title: '' },
+      '2026-10-11': { title: 'Through the circle' },
+    },
+    sessionNotes: {
+      '2026-10-11': { r1: { text: 'Took the teleport circle from the waystation. Port Calder smells of fish and trouble.', authorEmail: 'player2@example.com', authorName: 'Oskar (Second Player)', createdAt: now, updatedAt: now } },
+    },
+    sessionSecrets: { '2026-10-11': { text: 'Next time: the harbor master is missing. Seed the rumor at the docks.' } },
+    handouts: {
+      h1: { title: 'Notice on the inn door', parentKind: 'pin', parentId: 'p1', revealed: true, visibility: 'public',
+        transcription: 'Wanted: guards for a caravan east. Ask for Hedda.', imageId: 'img-notice', url: null, crop: null, createdAt: now },
+      h2: { title: 'Smuggler\'s ledger page', parentKind: 'pin', parentId: 'p4', revealed: false, visibility: 'hidden',
+        transcription: 'Three crates, north dock, new moon.', imageId: null, url: null, crop: null, createdAt: now },
+    },
+    images: {
+      'img-notice': { data: demoImage('#e8dcc0', '#5a4632', 'WANTED'), width: 600, height: 800 },
+      'img-maro': { data: demoImage('#c9a227', '#1f2a36', 'M'), width: 512, height: 512 },
     },
     npcNotes: {
       n1: { a1: { text: 'Sold us rope at a fair price. Asked a lot of questions about where we were headed.', authorEmail: 'player@example.com', authorName: 'Brynja (Demo Player)', createdAt: now, updatedAt: now } },
@@ -89,16 +122,22 @@ export function createDemoBackend(roleParam) {
       if (sub) {
         const table = col === 'pins' && sub === 'notes' ? data.notes : col === 'npcs' && sub === 'notes' ? data.npcNotes : null;
         if (table) { if (value) (table[id] ||= {})[subId] = value; else if (table[id]) delete table[id][subId]; continue; }
+        if (col === 'sessions' && sub === 'notes') { if (value) (data.sessionNotes[id] ||= {})[subId] = value; else if (data.sessionNotes[id]) delete data.sessionNotes[id][subId]; continue; }
         if (col === 'pins' && sub === 'dm') { if (value) data.dm[id] = value.text; else delete data.dm[id]; continue; }
         continue;
       }
       if (col === 'pins' && !value) { delete data.pins[id]; delete data.notes[id]; delete data.dm[id]; continue; }
       if (col === 'npcs' && !value) { delete data.npcs[id]; delete data.npcNotes[id]; continue; }
+      if (col === 'sessions' && !value) { delete data.sessions[id]; delete data.sessionNotes[id]; continue; }
       if (value) (data[col] ||= {})[id] = value; else delete data[col]?.[id];
     }
   }
 
   const listeners = new Set();
+  // Presenter state is the one thing shared between demo tabs, so a PC view
+  // tab can follow a DM tab. Everything else stays per tab.
+  const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('campaign-map-demo-presenter') : null;
+  if (channel) channel.onmessage = (e) => { data.presenter = e.data; emit(); };
   const emit = () => queueMicrotask(() => listeners.forEach((l) => l()));
   const sub = (fn) => { listeners.add(fn); fn(); return () => listeners.delete(fn); };
   const list = (obj) => Object.entries(obj).map(([id, v]) => ({ id, ...clone(v) }));
@@ -124,6 +163,13 @@ export function createDemoBackend(roleParam) {
     watchNpcs: (dmView, cb) => sub(() => cb(list(data.npcs).filter((n) => (dmView && isDM()) || n.visibility === 'public'))),
     watchNpcSecrets: (cb) => sub(() => cb(isDM() ? list(data.npcSecrets) : [])),
     watchNpcNotes: (npcId, cb) => sub(() => cb(list(data.npcNotes[npcId] || {}))),
+    watchPresenter: (cb) => sub(() => cb(clone(data.presenter))),
+    watchPlans: (cb) => sub(() => cb(list(data.plans))),
+    watchDmPlans: (cb) => sub(() => cb(isDM() ? list(data.dmPlans) : [])),
+    watchSessions: (cb) => sub(() => cb(list(data.sessions))),
+    watchSessionNotes: (id, cb) => sub(() => cb(list(data.sessionNotes[id] || {}))),
+    watchSessionSecret: (id, cb) => sub(() => cb(isDM() ? data.sessionSecrets[id]?.text || '' : '')),
+    watchHandouts: (dmView, cb) => sub(() => cb(list(data.handouts).filter((x) => (dmView && isDM()) || x.visibility === 'public'))),
     watchNotes: (pinId, cb) => sub(() => cb(list(data.notes[pinId] || {}))),
     watchDmText: (pinId, cb) => sub(() => cb(data.dm[pinId] || '')),
 
@@ -222,6 +268,57 @@ export function createDemoBackend(roleParam) {
     async deleteAffiliation(id) { guard(isDM(), 'edit affiliations'); delete data.affiliations[id]; emit(); },
     async reveal(col, id) { guard(isDM(), 'reveal this'); if (data[col]?.[id]) data[col][id].revealed = true; emit(); },
 
+    async setPresenter(state) {
+      guard(isDM(), 'present');
+      data.presenter = { ...clone(state), updatedAt: new Date() };
+      channel?.postMessage(data.presenter); // other demo tabs (a PC view tab) follow
+      emit();
+    },
+    async savePlan(id, plan, dm) {
+      guard(!dm || isDM(), 'make DM plans');
+      const table = dm ? data.dmPlans : data.plans;
+      const pid = id || newId();
+      table[pid] = { ...clone(plan), updatedAt: new Date() };
+      emit();
+      return pid;
+    },
+    async deletePlan(id, dm) { guard(!dm || isDM(), 'delete DM plans'); delete (dm ? data.dmPlans : data.plans)[id]; emit(); },
+    async saveSession(id, x) { guard(isDM(), 'edit sessions'); data.sessions[id] = clone(x); emit(); },
+    async deleteSession(id) { guard(isDM(), 'delete sessions'); delete data.sessions[id]; delete data.sessionNotes[id]; delete data.sessionSecrets[id]; emit(); },
+    async setSessionSecret(id, text) { guard(isDM(), 'edit DM session notes'); data.sessionSecrets[id] = { text }; emit(); },
+    async addSessionNote(id, note) {
+      guard(note.authorEmail === me.email, 'write as someone else');
+      (data.sessionNotes[id] ||= {})[newId()] = { ...note, createdAt: new Date(), updatedAt: new Date() };
+      emit();
+    },
+    async updateSessionNote(id, noteId, fields) {
+      const n = data.sessionNotes[id]?.[noteId];
+      guard(n && n.authorEmail === me.email, 'edit this note');
+      Object.assign(n, clone(fields), { updatedAt: new Date() });
+      emit();
+    },
+    async deleteSessionNote(id, noteId) {
+      const n = data.sessionNotes[id]?.[noteId];
+      guard(n && (isDM() || n.authorEmail === me.email), 'delete this note');
+      delete data.sessionNotes[id][noteId];
+      emit();
+    },
+    async readSessionTexts(ids) {
+      return new Map(ids.filter((id) => data.sessions[id]).map((id) => [id, { notes: list(data.sessionNotes[id] || {}) }]));
+    },
+    async saveHandout(id, h) {
+      guard(isDM(), 'edit handouts');
+      const hid = id || newId();
+      data.handouts[hid] = { ...clone(h), createdAt: data.handouts[hid]?.createdAt || new Date() };
+      emit();
+      return hid;
+    },
+    async deleteHandout(id) { guard(isDM(), 'delete handouts'); delete data.handouts[id]; emit(); },
+    async setHandoutVisibility(id, visibility) { guard(isDM(), 'edit handouts'); if (data.handouts[id]) data.handouts[id].visibility = visibility; emit(); },
+    async saveImage(img) { guard(isDM(), 'upload images'); const iid = newId(); data.images[iid] = clone(img); return iid; },
+    async getImage(id) { return data.images[id]?.data || null; },
+    async deleteImage(id) { guard(isDM(), 'delete images'); delete data.images[id]; },
+
     newId: () => newId(),
     async applyOps(ops) { guard(isDM(), 'make these changes'); applyOps(ops); emit(); },
 
@@ -264,6 +361,9 @@ export function createDemoBackend(roleParam) {
         pins: list(data.pins).map((p) => ({ ...p, notes: list(data.notes[p.id] || {}), dmText: data.dm[p.id] || '' })),
         npcs: list(data.npcs).map((n) => ({ ...n, notes: list(data.npcNotes[n.id] || {}) })),
         npcSecrets: list(data.npcSecrets), affiliations: list(data.affiliations), travelModes: list(data.travelModes),
+        sessions: list(data.sessions).map((x) => ({ ...x, notes: list(data.sessionNotes[x.id] || {}) })),
+        sessionSecrets: list(data.sessionSecrets), plans: list(data.plans), dmPlans: list(data.dmPlans),
+        handouts: list(data.handouts), images: list(data.images),
       });
     },
   };

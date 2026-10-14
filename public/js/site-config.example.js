@@ -57,3 +57,14 @@ export const STARTING_PIN_TYPES = [
 // Wording for route legs where the party teleported instead of traveling.
 // label: legend and headings. inline: inside sentences ("By teleport").
 export const TELEPORT = { label: 'Teleport', inline: 'teleport' };
+
+// Optional: this campaign's own in-game calendar, offered first in Map
+// settings when the DM chooses "In-game calendar". Built-in presets cover the
+// Forgotten Realms, Greyhawk, Golarion and Eberron (public/js/calendar.js has
+// them as examples of the shape). Leave it out if a preset fits.
+// export const CALENDAR = {
+//   name: 'Our calendar', yearSuffix: 'AE',
+//   periods: [{ name: 'Firstmonth', days: 30 }, { name: 'Feast', days: 1, festival: true }, ...],
+//   leap: null,
+//   week: { length: 7, names: [] },
+// };
