@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runs before every `git push` (turned on by `npm install`; see
+# scripts/install-hooks.mjs). Cancels the push if `npm run check:public`
+# finds private settings, the map, a backup or an email address in what
+# git would publish. To push anyway, once: git push --no-verify
+node scripts/check-public.mjs
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo
+  echo "Push cancelled by the public-repo check. Fix the problems listed above, then push again."
+  exit 1
+fi

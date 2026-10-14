@@ -351,7 +351,10 @@ The app picks its database from the address it is opened on: the production host
 
 ## Publishing changes to a public repository
 
-Before every push, run:
+`git push` runs this check first and cancels the push if it fails. `npm install` turns
+that on (it sets git's `core.hooksPath` to the committed `.githooks` folder); in a copy
+where `npm install` has not been run yet, run `node scripts/install-hooks.mjs` once. To run
+the check yourself:
 ```
 npm run check:public
 ```
@@ -359,7 +362,10 @@ It lists exactly the files git would publish and fails if any of them is one of 
 private settings files, a map image other than the example, or a backup, or contains a
 value read from your private files (domain, Firebase project ids and keys, Worker name,
 deploy addresses) or a real-looking email address. It reads those values from your
-private files when it runs, so the check itself publishes nothing.
+private files when it runs, so the check itself publishes nothing. It checks your folder
+as it is now, so an untracked file that is not ignored also stops the push: add it to
+`.gitignore`, delete it, or commit it. In an emergency, `git push --no-verify` skips the
+check once.
 
 ## Troubleshooting
 
@@ -397,6 +403,7 @@ private files when it runs, so the check itself publishes nothing.
 | `scripts/serve.mjs` | Local web server |
 | `scripts/deploy.mjs` | Step-by-step deploy (`npm run deploy:dev`, `npm run deploy:prod`) |
 | `scripts/check-public.mjs` | Pre-push check for private data (`npm run check:public`) |
+| `.githooks/pre-push`, `scripts/install-hooks.mjs` | Run that check on every `git push`; turned on by `npm install` |
 | `LICENSE` | MIT license |
 | `firebase.json` | Firebase tool settings |
 | `wrangler.example.jsonc`, `.firebaserc.example`, `.deploy.env.example` | Templates for this copy's Cloudflare, Firebase and deploy settings |
