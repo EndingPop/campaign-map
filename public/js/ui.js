@@ -37,7 +37,8 @@ export function toast(message, kind = 'info') {
   el.dataset.kind = kind;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, kind === 'error' ? 8000 : 3500);
+  // Long messages stay up longer (about 60 ms per character).
+  toastTimer = setTimeout(() => { el.hidden = true; }, Math.max(kind === 'error' ? 8000 : 3500, message.length * 60));
 }
 
 // Turns a thrown Firebase error into a sentence that says what to do.

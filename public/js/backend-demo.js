@@ -325,6 +325,7 @@ export function createDemoBackend(roleParam) {
     async addWaypoint(w) { guard(isDM(), 'edit the route'); data.waypoints[newId()] = clone(w); emit(); },
     async updateWaypoint(id, w) { guard(isDM(), 'edit the route'); Object.assign(data.waypoints[id], clone(w)); emit(); },
     async deleteWaypoint(id) { guard(isDM(), 'edit the route'); delete data.waypoints[id]; emit(); },
+    async updateWaypoints(updates) { guard(isDM(), 'edit the route'); for (const u of updates) Object.assign(data.waypoints[u.id], clone(u.data)); emit(); },
 
     async savePinType(id, t) { guard(isDM(), 'edit pin types'); data.pinTypes[id] = clone(t); emit(); },
     async deletePinType(id) { guard(isDM(), 'edit pin types'); delete data.pinTypes[id]; emit(); },

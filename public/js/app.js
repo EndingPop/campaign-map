@@ -794,7 +794,12 @@ function renderRouteList() {
         legLine(w, i) ? h('span', { class: 'route-date' }, legLine(w, i)) : null,
         gameTimeLabel(w) ? h('span', { class: 'route-date route-game' }, gameTimeLabel(w)) : null,
         w.sessionDate ? h('span', { class: 'route-date' }, formatSessionDate(w.sessionDate)) : null),
-      isDM() ? h('span', {},
+      isDM() ? h('span', { class: 'route-actions' },
+        // The list shows the newest stop first, so up the list is later in the route.
+        h('button', { class: 'btn link small route-move', type: 'button', disabled: last, title: 'Move this stop one place later in the route',
+          'aria-label': `Move ${stopLabel(w)} later in the route`, onclick: () => moveStop(w.id, i + 1) }, '\u2191'),
+        h('button', { class: 'btn link small route-move', type: 'button', disabled: i === 0, title: 'Move this stop one place earlier in the route',
+          'aria-label': `Move ${stopLabel(w)} earlier in the route`, onclick: () => moveStop(w.id, i - 1) }, '\u2193'),
         h('button', { class: 'btn link small', type: 'button', title: 'Edit this stop', onclick: () => editStop(w) }, 'Edit')) : null);
   }).reverse();
   list.replaceChildren(...items);
@@ -1309,6 +1314,41 @@ async function addStop(pos, pin, path = [], opts = {}) {
   }
 }
 
+// Puts stop `id` at position `to` (0-based) and renumbers the route. A stop's
+// drawn road runs from the stop before it, so every stop whose previous stop
+// changed loses its bend points and becomes a straight line until redrawn.
+// Its travel mode is kept.
+async function moveStop(id, to) {
+  const from = state.waypoints.findIndex((w) => w.id === id);
+  if (from < 0 || to < 0 || to >= state.waypoints.length || to === from) return false;
+  const order = [...state.waypoints];
+  const [moved] = order.splice(from, 1);
+  order.splice(to, 0, moved);
+  const prevOf = (list) => new Map(list.map((w, i) => [w.id, list[i - 1]?.id ?? null]));
+  const before = prevOf(state.waypoints);
+  const after = prevOf(order);
+  const updates = [];
+  const straightened = [];
+  order.forEach((w, i) => {
+    const data = {};
+    if (w.seq !== i + 1) data.seq = i + 1;
+    if (before.get(w.id) !== after.get(w.id) && Array.isArray(w.path) && w.path.length) {
+      data.path = [];
+      if (i > 0) straightened.push(stopLabel(w));
+    }
+    if (Object.keys(data).length) updates.push({ id: w.id, data });
+  });
+  const days = order.map(gameDayNumber);
+  const dates = order.map((w) => w.sessionDate || null);
+  const backwards = order.some((w, i) => i > 0 && ((days[i] != null && days[i - 1] != null && days[i] < days[i - 1])
+    || (dates[i] && dates[i - 1] && dates[i] < dates[i - 1])));
+  const msg = ['Stop moved.'];
+  if (straightened.length === 1) msg.push(`The road into "${straightened[0]}" is now a straight line, since the stop before it changed. To redraw it: Edit, then "Redraw it on the map".`);
+  if (straightened.length > 1) msg.push(`The roads into ${straightened.map((n) => `"${n}"`).join(' and ')} are now straight lines, since the stops before them changed. To redraw one: Edit, then "Redraw it on the map".`);
+  if (backwards) msg.push('Some dates now go backwards along the route; check them with Edit.');
+  return attempt(() => state.backend.updateWaypoints(updates).then(() => true), msg.join(' '));
+}
+
 async function editStop(w) {
   const index = state.waypoints.findIndex((x) => x.id === w.id);
   const bends = Array.isArray(w.path) ? w.path.length : 0;
@@ -1321,6 +1361,10 @@ async function editStop(w) {
     fields: [
       { name: 'label', label: 'Place name', value: w.label || '' },
       { name: 'sessionDate', label: 'Session date', type: 'date', value: w.sessionDate || '' },
+      state.waypoints.length > 1 ? { name: 'position', label: 'Place in the route', type: 'select', value: String(index),
+        options: state.waypoints.map((x, i) => ({ value: String(i),
+          label: i === index ? `${i + 1} (where it is now)` : `${i + 1} (${i < index ? 'before' : 'after'} "${stopLabel(x)}")` })),
+        hint: 'The last stop is where the party is. Moving a stop turns roads into straight lines where the stop before them changes.' } : null,
       index > 0 ? { name: 'travel', label: 'How the party got here', type: 'select', value: current, options: travelOptions(), hint: TRAVEL_FIELD_HINT } : null,
       index > 0 ? { name: 'road', label: `Line from the previous stop (now: ${pathNow})`, type: 'select', value: 'keep',
         options: [{ value: 'keep', label: 'Keep as is' }, { value: 'redraw', label: 'Redraw it on the map' }, { value: 'straight', label: 'Make it a straight line' }],
@@ -1344,11 +1388,15 @@ async function editStop(w) {
   if (arc || vals.road === 'straight') update.path = [];
   const redraw = vals.road === 'redraw' && !arc;
   if (vals.road === 'redraw' && arc) toast('That travel mode is drawn as a direct arc, so there is no road to redraw.');
-  const saved = await attempt(() => state.backend.updateWaypoint(w.id, update).then(() => true), 'Stop saved.');
+  const to = vals.position == null ? index : Number(vals.position);
+  const moving = to !== index;
+  const saved = await attempt(() => state.backend.updateWaypoint(w.id, update).then(() => true), moving ? null : 'Stop saved.');
   if (saved && index > 0) revealModeFor(travel);
-  if (redraw) {
+  if (saved && moving) await moveStop(w.id, to);
+  const now = state.waypoints.findIndex((x) => x.id === w.id);
+  if (redraw && now > 0) {
     setMode('redraw', { points: [], redrawId: w.id });
-    const prev = state.waypoints[index - 1];
+    const prev = state.waypoints[now - 1];
     state.map?.flyToBounds(L.latLngBounds([ll(prev.x, prev.y), ll(w.x, w.y)]).pad(0.4), { duration: 0.6, maxZoom: state.fitZoom + 2 });
   }
 }

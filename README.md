@@ -231,6 +231,13 @@ The app picks its database from the address it is opened on: the production host
   is drawn as a smooth curve through every stop and bend point, so three or four clicks per leg
   follow most roads. The newest stop is the party's current position. **Party arrived here** on
   a pin adds a straight leg in one step.
+- **Stop order:** the arrows beside each stop in the route list move it one place (the list
+  shows the newest stop at the top, so the up arrow moves a stop later in the route). To move a
+  stop further, use **Place in the route** in **Edit stop**. A stop keeps its travel mode, but
+  a road drawn from the stop before it no longer fits once that stop changes, so each stop whose
+  previous stop changed gets a straight line; redraw it with **Edit stop** > "Redraw it on the
+  map". The app also says when session or in-game dates now go backwards along the route. The
+  last stop is always the party's position.
 - **Travel modes:** when adding a stop, **How the party got here** picks the travel mode.
   The DM's app creates two on first sign-in: overland travel (`Overland travel`) and a teleport (its
   name comes from `TELEPORT` in `site-config.js`). Add more in account menu > **Travel

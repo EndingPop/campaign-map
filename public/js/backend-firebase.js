@@ -235,6 +235,15 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
     addWaypoint: (data) => addDoc(collection(db, 'waypoints'), { ...data, createdAt: serverTimestamp() }),
     updateWaypoint: (id, data) => updateDoc(doc(db, 'waypoints', id), data),
     deleteWaypoint: (id) => deleteDoc(doc(db, 'waypoints', id)),
+    // Several stop changes at once (reordering), in one batch so nobody
+    // sees the route half reordered. updates: [{ id, data }].
+    async updateWaypoints(updates) {
+      for (let i = 0; i < updates.length; i += 400) {
+        const batch = writeBatch(db);
+        for (const u of updates.slice(i, i + 400)) batch.update(doc(db, 'waypoints', u.id), u.data);
+        await batch.commit();
+      }
+    },
 
     savePinType: (id, data) => setDoc(doc(db, 'pinTypes', id), data),
     deletePinType: (id) => deleteDoc(doc(db, 'pinTypes', id)),
