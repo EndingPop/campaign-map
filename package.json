@@ -14,7 +14,8 @@
     "deploy:site:dev": "wrangler deploy --env dev",
     "deploy:site:prod": "wrangler deploy --env=\"\"",
     "vendor": "node scripts/vendor.mjs",
-    "deploy": "bash scripts/deploy.sh",
+    "deploy:dev": "node scripts/deploy.mjs dev",
+    "deploy:prod": "node scripts/deploy.mjs prod",
     "check:public": "node scripts/check-public.mjs"
   },
   "devDependencies": {

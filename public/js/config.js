@@ -51,7 +51,7 @@ export const TRAVEL_PACES = [
 // The teleport wording comes from site-config.js (e.g. "Harper teleport").
 const teleport = site.TELEPORT || { label: 'Teleport', inline: 'teleport' };
 export const STARTING_TRAVEL_MODES = [
-  { id: 'road', label: 'Party route', inline: 'road', color: '#c9a227', line: 'path', dash: 'dash',
+  { id: 'road', label: 'Overland travel', inline: 'overland travel', color: '#c9a227', line: 'path', dash: 'dash',
     paces: Object.fromEntries(TRAVEL_PACES.map((p) => [p.id, p.milesPerDay])), revealed: true, sortOrder: 1 },
   { id: 'teleport', label: teleport.label, inline: teleport.inline || teleport.label, color: '#b07cff', line: 'arc', dash: 'dot',
     paces: {}, revealed: false, sortOrder: 2 },

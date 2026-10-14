@@ -79,7 +79,7 @@ committed `.example` file to copy and fill in; the real files are listed in `.gi
 | `public/js/site-config.example.js` | `public/js/site-config.js` | Site title, production hostname, the two Firebase web configs, map image and scale, starting pin types, teleport wording |
 | `wrangler.example.jsonc` | `wrangler.jsonc` | Worker name and production custom domain |
 | `.firebaserc.example` | `.firebaserc` | Your dev and prod Firebase project ids (or create it with `npx firebase use --add`) |
-| `.deploy.env.example` | `.deploy.env` | Optional: your dev and prod addresses, shown by `npm run deploy` |
+| `.deploy.env.example` | `.deploy.env` | Optional: your dev and prod addresses, shown by `npm run deploy:dev` and `npm run deploy:prod` |
 
 Until `site-config.js` exists the app falls back to the example, so demo mode works but
 signing in reports that Firebase is not set up.
@@ -94,13 +94,18 @@ repository because they belong to one copy, not because they must be hidden.
 Published campaign maps are usually copyrighted, so map files are not committed: anything
 in `public/map/` except `example-map.png` is ignored by git. Put your map in `public/map/`,
 set `MAP.imagePath`, `imageWidth` and `imageHeight` in `site-config.js`, and keep a copy
-somewhere safe, since git will not. `npm run deploy` uploads it from your folder and warns
-if it is missing.
+somewhere safe, since git will not. The deploy uploads it from your folder and warns if it
+is missing.
 
 - Width and height are the coordinate grid every pin and route point is stored on.
 - **Sharper copy of the same map later:** replace the file and keep the width and height
   (in Map settings) unchanged. The image stretches to fill the same grid, so pins stay in
-  place, and the zoom limit rises to match the extra detail.
+  place, and the zoom limit rises to match the extra detail. If the file name or format
+  changes (`map.jpg` to `map.webp`, say), change `MAP.imagePath` in `site-config.js` and
+  also the image path in the app's **Map settings** on dev and prod: once Map settings
+  has been saved (setting the scale from the Measure tool saves it too), the saved path
+  is used instead of `site-config.js`. The scale (miles per pixel) is per grid pixel, so it
+  stays the same.
 - **A differently framed map** (cropped, or a different region) needs every pin moved, so
   settle on the map before entering much campaign data.
 - **Scale:** open the app, use the Measure tool along the map's scale bar, and choose
@@ -215,7 +220,7 @@ The app picks its database from the address it is opened on: the production host
   follow most roads. The newest stop is the party's current position. **Party arrived here** on
   a pin adds a straight leg in one step.
 - **Travel modes:** when adding a stop, **How the party got here** picks the travel mode.
-  The DM's app creates two on first sign-in: the road (`Party route`) and a teleport (its
+  The DM's app creates two on first sign-in: overland travel (`Overland travel`) and a teleport (its
   name comes from `TELEPORT` in `site-config.js`). Add more in account menu > **Travel
   modes**: name, color, line style, whether the line follows clicked road points or is a
   direct arc between stops, and the slow, normal and fast pace in miles a day. Fill in only
@@ -280,11 +285,15 @@ The app picks its database from the address it is opened on: the production host
   your own member entry is never removed. A backup from a different project (dev into prod,
   say) needs an extra confirmation. If the restore stops part-way (lost connection), run it
   again with the same file.
-- **Updating the site:** run `npm run deploy`. It checks that your settings files exist,
-  then walks through every step in order (install, rules tests, dev rules, dev site, a pause
-  to check dev, a pause to back up prod, prod rules, prod site), shows each command and
-  waits: Enter runs it, `s` skips it, `q` quits. If a command fails it stops there and runs
-  nothing after it. `npm run deploy -- --dry-run` shows the steps without running anything.
+- **Updating the site** takes two commands, so you can check dev in between:
+  - `npm run deploy:dev`: install, rules tests, dev rules, dev site.
+  - `npm run deploy:prod`: a pause to back up prod, then prod rules and prod site.
+
+  Both check that your settings files and map exist, then show each command and wait:
+  Enter runs it, `s` skips it, `q` quits. If a command fails, it stops there and runs
+  nothing after it. Add `-- --dry-run` (`npm run deploy:dev -- --dry-run`) to see the steps
+  without running anything. The script is Node.js (`scripts/deploy.mjs`), so it works the
+  same in a Windows, macOS or Linux terminal.
   Cloudflare keeps earlier versions; if something breaks, run `npx wrangler rollback --env=""`
   (production) or use the Worker's Deployments tab in the dashboard.
 
@@ -310,7 +319,7 @@ private files when it runs, so the check itself publishes nothing.
 | "This address is not on the Firebase project's authorized domains list" | Firebase console > Authentication > Settings > Authorized domains: add the address shown in the browser. |
 | The sign-in window never appears on a phone | Allow pop-ups for the site. |
 | `npm run test:rules` fails to start | Check `java -version` (21+) and `node --version` (24.12+), and that `npm run emulators` is not already running. |
-| `npm run deploy` says a settings file is missing | Copy the matching `.example` file (section 3). |
+| `npm run deploy:dev` or `deploy:prod` says a settings file is missing | Copy the matching `.example` file (section 3). |
 
 ## Files
 
@@ -332,7 +341,7 @@ private files when it runs, so the check itself publishes nothing.
 | `tests/rules.test.mjs` | Security rules tests |
 | `scripts/seed.mjs` | Test data for the local emulator only |
 | `scripts/serve.mjs` | Local web server |
-| `scripts/deploy.sh` | Step-by-step deploy (`npm run deploy`) |
+| `scripts/deploy.mjs` | Step-by-step deploy (`npm run deploy:dev`, `npm run deploy:prod`) |
 | `scripts/check-public.mjs` | Pre-push check for private data (`npm run check:public`) |
 | `LICENSE` | MIT license |
 | `firebase.json` | Firebase tool settings |
