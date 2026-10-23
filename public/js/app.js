@@ -1410,6 +1410,7 @@ function openPin(id) {
     state.dmText = '';
     state.noteDraft = '';
     state.selectedNpcId = null;
+    state.selectedAffId = null;
     clearSessionSelection();
     state.selectedPinId = id;
     state.detailSubs.push(state.backend.watchNotes(id, (notes) => {
@@ -1450,6 +1451,7 @@ function closeDetail() {
   state.selectedPinId = null;
   const hadNpc = state.selectedNpcId;
   state.selectedNpcId = null;
+  state.selectedAffId = null;
   clearSessionSelection();
   $('detail').hidden = true;
   if (had) renderPins();
@@ -1459,6 +1461,7 @@ function closeDetail() {
 
 function renderDetail() {
   const panel = $('detail');
+  if (state.selectedAffId) { renderAffiliationDetail(panel); return; }
   if (state.selectedNpcId) { renderNpcDetail(panel); return; }
   if (state.selectedSessionId) { renderSessionDetail(panel); return; }
   const pin = state.pins.get(state.selectedPinId);
@@ -1621,9 +1624,16 @@ function npcLinks(npc, kind) {
     .filter((x) => x.item)
     .sort((a, b) => (a.item.name || '').localeCompare(b.item.name || ''));
 }
-function affChip({ item, hidden }) {
-  return h('span', { class: `aff-chip${hidden ? ' hidden-link' : ''}`, title: [item.description, hidden ? 'Hidden from players' : ''].filter(Boolean).join('\n') || null },
-    h('span', { class: 'aff-dot', style: `background:${item.color}` }), item.name, hidden ? ' (hidden)' : '');
+// An affiliation's mark: its symbol image when it has one, else its color dot.
+function affMark(a, cls = 'aff-symbol-sm') {
+  return a.symbol ? imageEl(a.symbol, `aff-symbol ${cls}`) : h('span', { class: 'aff-dot', style: `background:${a.color}` });
+}
+// `open`: the chip is a button that opens the affiliation (not inside other buttons).
+function affChip({ item, hidden }, { open = false } = {}) {
+  const title = [item.description, hidden ? 'Hidden from players' : ''].filter(Boolean).join('\n') || null;
+  const kids = [affMark(item), item.name, hidden ? ' (hidden)' : ''];
+  if (open) return h('button', { type: 'button', class: `aff-chip aff-chip-btn${hidden ? ' hidden-link' : ''}`, title: title || `About ${item.name}`, onclick: () => openAffiliation(item.id) }, kids);
+  return h('span', { class: `aff-chip${hidden ? ' hidden-link' : ''}`, title }, kids);
 }
 function statusChip(npc) {
   return h('span', { class: `status-chip status-${npc.status || 'unknown'}` }, statusLabel(npc.status));
@@ -1636,7 +1646,7 @@ function npcRow(npc, { hiddenLink = false } = {}) {
       h('span', { class: 'npc-row-name' }, npc.name,
         npc.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden') : null,
         hiddenLink ? h('span', { class: 'search-hidden' }, 'hidden link') : null),
-      h('span', { class: 'npc-row-meta' }, statusChip(npc), npcLinks(npc, 'affiliations').map(affChip))));
+      h('span', { class: 'npc-row-meta' }, statusChip(npc), npcLinks(npc, 'affiliations').map((x) => affChip(x)))));
 }
 
 function renderSideTabs() {
@@ -1661,6 +1671,7 @@ function renderNpcList() {
       h('select', { onchange: (e) => { state.npcFilter = e.target.value; renderNpcList(); } },
         h('option', { value: '' }, 'All'),
         affs.map((a) => h('option', { value: a.id, selected: a.id === state.npcFilter }, a.name)))) : null,
+    state.npcFilter ? affCard(state.affiliations.get(state.npcFilter)) : null,
     list.length ? h('ul', { class: 'npc-list' }, list.map((n) => npcRow(n)))
       : h('p', { class: 'empty' }, state.npcs.size ? 'No NPCs with that affiliation.' : (isDM() ? 'No NPCs yet.' : 'The party has not met anyone yet.')),
     isDM() ? h('div', { class: 'detail-actions' }, h('button', { class: 'btn primary small', type: 'button', onclick: () => editNpc(null) }, 'Add NPC')) : null,
@@ -1677,6 +1688,7 @@ function openNpc(id) {
     state.npcNotes = [];
     state.npcNoteDraft = '';
     clearSessionSelection();
+    state.selectedAffId = null;
     state.selectedNpcId = id;
     state.detailSubs.push(state.backend.watchNpcNotes(id, (notes) => {
       state.npcNotes = notes.sort((a, b) => noteTime(b) - noteTime(a));
@@ -1720,7 +1732,7 @@ function renderNpcDetail(panel) {
     h('div', { class: 'badges' },
       h('span', { class: 'badge' }, 'NPC'),
       statusChip(npc),
-      npcLinks(npc, 'affiliations').map(affChip),
+      npcLinks(npc, 'affiliations').map((x) => affChip(x, { open: true })),
       npc.visibility === 'hidden' ? h('span', { class: 'badge hidden-badge' }, 'Hidden from players') : null),
     npc.description ? h('p', { class: 'desc' }, npc.description) : h('p', { class: 'muted' }, isDM() ? 'No description yet. Players see the description once the NPC is revealed.' : 'No description yet.'),
     isDM() ? h('div', { class: 'dm-box' },
@@ -1818,6 +1830,69 @@ async function deleteNpc(npc) {
   if (npc.portrait?.imageId) attempt(() => state.backend.deleteImage(npc.portrait.imageId));
 }
 
+// ---------- affiliation view (everyone) ----------
+// A short card at the top of the NPC list when it is filtered to one group.
+function affCard(a) {
+  if (!a) return null;
+  return h('button', { type: 'button', class: 'aff-card', title: `About ${a.name}`, onclick: () => openAffiliation(a.id) },
+    affMark(a, 'aff-symbol-md'),
+    h('span', { class: 'aff-card-text' }, h('span', { class: 'aff-card-name' }, a.name),
+      a.description ? h('span', { class: 'aff-card-desc' }, a.description) : null));
+}
+function openAffiliation(id) {
+  if (!state.affiliations.has(id)) return;
+  if (state.selectedAffId !== id) {
+    state.detailSubs.forEach((u) => u());
+    state.detailSubs = [];
+    const hadPin = state.selectedPinId;
+    state.selectedPinId = null;
+    if (hadPin) renderPins();
+    state.selectedNpcId = null;
+    clearSessionSelection();
+    state.selectedAffId = id;
+  }
+  if (isPhone()) setSide(false);
+  renderDetail();
+  renderNpcList();
+}
+// The group: symbol, description, and the NPCs this person can see in it
+// (the DM also sees members whose link is hidden, marked "hidden link").
+function renderAffiliationDetail(panel) {
+  const a = state.affiliations.get(state.selectedAffId);
+  if (!a) { panel.hidden = true; return; }
+  const members = [...state.npcs.values()]
+    .map((n) => ({ n, link: npcLinks(n, 'affiliations').find((x) => x.item.id === a.id) }))
+    .filter((x) => x.link)
+    .sort((x, y) => byName(x.n, y.n));
+  panel.replaceChildren(...[
+    h('div', { class: 'detail-head' },
+      a.symbol ? imageEl(a.symbol, 'aff-symbol aff-symbol-lg') : null,
+      h('h2', {}, a.name),
+      h('button', { class: 'icon-btn', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closeDetail,
+        html: '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' })),
+    h('div', { class: 'badges' },
+      h('span', { class: 'badge' }, 'Affiliation'),
+      isDM() && !a.revealed ? h('span', { class: 'badge hidden-badge' }, 'Players do not know this group exists') : null),
+    a.description ? h('p', { class: 'desc' }, a.description) : h('p', { class: 'muted' }, 'No description yet.'),
+    isDM() ? h('div', { class: 'detail-actions' },
+      h('button', { class: 'btn', type: 'button', onclick: () => editAffiliation(a) }, 'Edit affiliation'),
+      h('button', { class: 'btn', type: 'button', onclick: () => setAffiliationSymbol(a) }, a.symbol ? 'Change symbol' : 'Set symbol')) : null,
+    h('h3', {}, isDM() ? 'Members' : 'Known members'),
+    members.length ? h('ul', { class: 'npc-list' }, members.map(({ n, link }) => npcRow(n, { hiddenLink: link.hidden })))
+      : h('p', { class: 'muted' }, isDM() ? 'No NPCs have this affiliation.' : 'No one the party knows of.'),
+  ].filter(Boolean));
+  panel.hidden = false;
+}
+async function setAffiliationSymbol(a) {
+  const r = await pickImage({ title: `Symbol of ${a.name}`, aspect: 1, current: a.symbol });
+  if (!r) return;
+  const symbol = r.remove ? null : r;
+  const saved = await attempt(() => state.backend.saveAffiliation(a.id, { ...affFields(a), symbol }).then(() => true), r.remove ? 'Symbol removed.' : 'Symbol saved.');
+  const old = a.symbol?.imageId;
+  if (saved && old && old !== symbol?.imageId) attempt(() => state.backend.deleteImage(old));
+}
+const affFields = (a) => ({ name: a.name, color: a.color, description: a.description || '', revealed: !!a.revealed, symbol: a.symbol || null });
+
 // ---------- NPC affiliations (DM) ----------
 function affiliationUses(id) {
   return [...state.npcs.values()].filter((n) => (n.affiliationIds || []).includes(id) || (npcSecret(n.id).hiddenAffiliationIds || []).includes(id)).length;
@@ -1836,14 +1911,16 @@ async function editAffiliation(aff) {
   });
   if (!vals || !vals.name) return;
   const id = aff?.id || state.backend.newId('affiliations');
-  await attempt(() => state.backend.saveAffiliation(id, { name: vals.name, color: vals.color, description: vals.description, revealed: vals.revealed }),
+  await attempt(() => state.backend.saveAffiliation(id, { name: vals.name, color: vals.color, description: vals.description, revealed: vals.revealed, symbol: aff?.symbol || null }),
     aff ? 'Affiliation saved.' : 'Affiliation added.');
 }
 async function deleteAffiliation(aff) {
   const used = affiliationUses(aff.id);
   const msg = used ? `"${aff.name}" is on ${used} NPC${used === 1 ? '' : 's'}; it disappears from them. Delete it?` : `Delete the affiliation "${aff.name}"?`;
   if (!(await confirmDialog(msg, 'Delete'))) return;
-  await attempt(() => state.backend.deleteAffiliation(aff.id), 'Affiliation deleted.');
+  if (state.selectedAffId === aff.id) closeDetail();
+  const done = await attempt(() => state.backend.deleteAffiliation(aff.id).then(() => true), 'Affiliation deleted.');
+  if (done && aff.symbol?.imageId) attempt(() => state.backend.deleteImage(aff.symbol.imageId));
 }
 function openAffiliations() {
   const body = h('div');
@@ -1853,12 +1930,13 @@ function openAffiliations() {
       affs.length ? h('table', { class: 'table' },
         h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Players know it exists'), h('th', {}, 'NPCs'), h('th', {}, ''))),
         h('tbody', {}, affs.map((a) => h('tr', {},
-          h('td', {}, h('span', { class: 'aff-dot', style: `background:${a.color}` })),
+          h('td', {}, affMark(a)),
           h('td', {}, a.name, a.description ? h('div', { class: 'hint' }, a.description) : null),
           h('td', {}, a.revealed ? 'Yes' : 'Not yet'),
           h('td', {}, String(affiliationUses(a.id))),
           h('td', { style: 'text-align:right;white-space:nowrap' },
             h('button', { class: 'btn small', type: 'button', onclick: () => editAffiliation(a) }, 'Edit'), ' ',
+            h('button', { class: 'btn small', type: 'button', onclick: () => setAffiliationSymbol(a) }, a.symbol ? 'Symbol' : 'Add symbol'), ' ',
             h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteAffiliation(a) }, 'Delete')))))) :
         h('p', { class: 'muted' }, 'No affiliations yet.'),
       h('p', { class: 'hint' }, 'Players learn a group exists (its name and description) once an NPC they can see shows it openly, or when you tick "Players know this group exists". Which NPCs belong to a group is set on each NPC: in Edit NPC, tick Hidden beside an affiliation to keep that NPC\'s membership secret, and untick it when they trust the party.'),
@@ -2277,6 +2355,7 @@ function openSession(id) {
     const hadPin = state.selectedPinId;
     state.selectedPinId = null;
     state.selectedNpcId = null;
+    state.selectedAffId = null;
     if (hadPin) renderPins();
     state.sessionNotes = [];
     state.sessionSecret = '';

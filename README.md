@@ -279,6 +279,14 @@ The app picks its database from the address it is opened on: the production host
   color, description). There, "Players know this group exists" decides only whether players
   see the group's name and description; it never reveals who belongs. It is ticked
   automatically once the group is a visible link on an NPC players can see.
+- **Affiliation symbols and pages:** the DM can give an affiliation a symbol (a banner,
+  crest or badge) with **Add symbol** in the affiliations list or **Set symbol** on its page,
+  from an upload or a web address, cropped square like a portrait. The symbol replaces the
+  color dot on that group's chips. Clicking an affiliation on an NPC's page, or the card that
+  appears when the NPCs tab is filtered to one group, opens the group's page: symbol,
+  description, and the members you can see (players see only NPCs whose membership is not
+  hidden; the DM sees all, with hidden ones marked). Deleting an affiliation also deletes its
+  stored symbol.
 - **Upgrading from 1.0:** "Person met" entries on pins become NPCs with account menu >
   **Convert "People met" to NPCs…** (DM). Each becomes a hidden NPC linked to its pin, with
   the entry's text as a party note by its original author. Check them, merge duplicates,

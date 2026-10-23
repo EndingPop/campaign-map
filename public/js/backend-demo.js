@@ -60,7 +60,7 @@ export function createDemoBackend(roleParam) {
       ship: { label: 'Ship', inline: 'ship', color: '#2a7fb8', line: 'arc', dash: 'solid', paces: { normal: 96 }, revealed: false, sortOrder: 3 },
     },
     affiliations: {
-      lantern: { name: 'Lantern Society', color: '#d4a017', description: 'Travelling scholars who trade in maps and rumors.', revealed: true },
+      lantern: { name: 'Lantern Society', color: '#d4a017', description: 'Travelling scholars who trade in maps and rumors.', revealed: true, symbol: { imageId: 'img-lantern' } },
       ash: { name: 'Ashen Hand', color: '#7a2e2e', description: 'A smuggling ring. The party has not heard of it yet.', revealed: false },
     },
     npcs: {
@@ -99,6 +99,7 @@ export function createDemoBackend(roleParam) {
     images: {
       'img-notice': { data: demoImage('#e8dcc0', '#5a4632', 'WANTED'), width: 600, height: 800 },
       'img-maro': { data: demoImage('#c9a227', '#1f2a36', 'M'), width: 512, height: 512 },
+      'img-lantern': { data: demoImage('#1f2a36', '#d4a017', 'L'), width: 512, height: 512 },
     },
     npcNotes: {
       n1: { a1: { text: 'Sold us rope at a fair price. Asked a lot of questions about where we were headed.', authorEmail: 'player@example.com', authorName: 'Brynja (Demo Player)', createdAt: now, updatedAt: now } },
