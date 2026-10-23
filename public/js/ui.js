@@ -62,38 +62,69 @@ export const COLOR_PRESETS = [
 ];
 const normHex = (v) => { const m = /^#?([0-9a-f]{6})$/i.exec((v || '').trim()); return m ? `#${m[1].toLowerCase()}` : null; };
 
-// A color field: preset swatches, a hex box, and "Other color" for the
-// browser's own picker. The browser's picker is a popup that can sit over the
-// dialog's buttons, and the click that closes it can land on them; `guard`
-// is told when that popup opens and closes so the dialog can ignore that click.
-function colorField(f, id, guard) {
+// HSL (h 0-360, s and l 0-100) to #rrggbb, and back.
+function hslToHex(hue, sat, lig) {
+  const s = sat / 100, l = lig / 100;
+  const k = (n) => (n + hue / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
+  return `#${[f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+function hexToHsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  const l = (max + min) / 2;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let hue = 0;
+  if (d) hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [Math.round((hue * 60 + 360) % 360), Math.round(s * 100), Math.round(l * 100)];
+}
+
+// A color field: preset swatches, a hex box, and "Custom color", which opens
+// hue, saturation and lightness sliders inside the dialog. It deliberately
+// does not use the browser's own color picker: that opens a separate window
+// that, in some browsers, stays open while the dialog behind it (with its
+// Save button) can still be clicked.
+function colorField(f, id) {
   const start = normHex(f.value) || '#5b6b7a';
   const hex = h('input', { id, type: 'text', class: 'color-hex', value: start, required: true, spellcheck: 'false',
     pattern: '#?[0-9a-fA-F]{6}', title: 'Six hex digits, like #d81b8c', 'aria-label': `${f.label}: hex code` });
   const preview = h('span', { class: 'color-preview', 'aria-hidden': 'true' });
-  const native = h('input', { type: 'color', class: 'color-native', value: start, tabindex: '-1', 'aria-hidden': 'true' });
   const swatches = COLOR_PRESETS.map(([name, c]) => h('button', { type: 'button', class: 'color-swatch', 'data-color': c,
     title: `${name} ${c}`, 'aria-label': name, style: `background:${c}`, onclick: () => set(c) }));
+  const slider = (label, max) => h('input', { type: 'range', min: '0', max: String(max), step: '1', class: 'color-slider', 'aria-label': `${f.label}: ${label}` });
+  const hueIn = slider('hue', 360), satIn = slider('saturation', 100), ligIn = slider('lightness', 100);
+  const sliders = h('div', { class: 'color-sliders', hidden: true },
+    h('label', {}, h('span', {}, 'Hue'), hueIn), h('label', {}, h('span', {}, 'Saturation'), satIn), h('label', {}, h('span', {}, 'Lightness'), ligIn));
+  const custom = h('button', { type: 'button', class: 'btn small', 'aria-expanded': 'false', onclick: () => {
+    sliders.hidden = !sliders.hidden;
+    custom.setAttribute('aria-expanded', String(!sliders.hidden));
+    custom.textContent = sliders.hidden ? 'Custom color' : 'Hide custom color';
+  } }, 'Custom color');
+  function paintSliders(hu, sa, li) {
+    hueIn.style.background = `linear-gradient(to right, ${[0, 60, 120, 180, 240, 300, 360].map((x) => hslToHex(x, sa, li)).join(', ')})`;
+    satIn.style.background = `linear-gradient(to right, ${hslToHex(hu, 0, li)}, ${hslToHex(hu, 100, li)})`;
+    ligIn.style.background = `linear-gradient(to right, #000000, ${hslToHex(hu, sa, 50)}, #ffffff)`;
+  }
   function set(c, from) {
     const v = normHex(c);
     if (v && from !== 'hex') hex.value = v;
     const shown = v || normHex(hex.value) || start;
     preview.style.background = shown;
-    if (from !== 'native') native.value = shown;
     swatches.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.color === shown)));
+    if (from !== 'slider') {
+      const [hu, sa, li] = hexToHsl(shown);
+      hueIn.value = String(hu); satIn.value = String(sa); ligIn.value = String(li);
+    }
+    paintSliders(Number(hueIn.value), Number(satIn.value), Number(ligIn.value));
   }
+  const fromSliders = () => set(hslToHex(Number(hueIn.value), Number(satIn.value), Number(ligIn.value)), 'slider');
+  [hueIn, satIn, ligIn].forEach((x) => x.addEventListener('input', fromSliders));
   hex.addEventListener('input', () => set(hex.value, 'hex'));
   hex.addEventListener('blur', () => { const v = normHex(hex.value); if (v) hex.value = v; });
-  native.addEventListener('input', () => set(native.value, 'native'));
-  native.addEventListener('change', () => { set(native.value, 'native'); guard.closed(); });
-  native.addEventListener('blur', () => guard.closed());
-  const other = h('button', { type: 'button', class: 'btn small', onclick: () => {
-    guard.opened();
-    try { native.showPicker(); } catch { native.click(); }
-  } }, 'Other color');
   set(start);
   const wrap = h('div', { class: 'color-field' }, h('div', { class: 'color-swatches', role: 'group', 'aria-label': `${f.label}: preset colors` }, swatches),
-    h('div', { class: 'color-custom' }, preview, hex, other, native));
+    h('div', { class: 'color-custom' }, preview, hex, custom), sliders);
   wrap.read = () => normHex(hex.value) || start;
   return wrap;
 }
@@ -105,18 +136,6 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
   return new Promise((resolve) => {
     const dlg = h('dialog', { class: 'dialog' });
     const inputs = {};
-    // While a browser color picker is open, and briefly after it closes, the
-    // dialog's own buttons ignore clicks (see colorField).
-    let pickerOpen = false;
-    let ignoreUntil = 0;
-    const guard = { opened: () => { pickerOpen = true; }, closed: () => { if (pickerOpen) { pickerOpen = false; ignoreUntil = Date.now() + 400; } } };
-    dlg.addEventListener('pointerdown', () => guard.closed(), true);
-    dlg.addEventListener('click', (e) => {
-      if ((pickerOpen || Date.now() < ignoreUntil) && e.target.closest?.('.dialog-actions button')) {
-        e.preventDefault(); e.stopPropagation();
-        pickerOpen = false;
-      }
-    }, true);
     const body = fields.map((f) => {
       const id = `f-${f.name}-${Math.random().toString(36).slice(2, 7)}`;
       let input;
@@ -157,7 +176,7 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
         inputs[f.name] = input;
         return h('div', { class: 'field' }, input, f.hint ? h('p', { class: 'hint' }, f.hint) : null);
       } else if (f.type === 'color') {
-        input = colorField(f, id, guard);
+        input = colorField(f, id);
         inputs[f.name] = input;
         return h('div', { class: 'field' }, h('label', { for: id }, f.label), input, f.hint ? h('p', { class: 'hint' }, f.hint) : null);
       } else if (f.type === 'checklist') {

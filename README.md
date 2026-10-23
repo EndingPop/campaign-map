@@ -265,9 +265,9 @@ The app picks its database from the address it is opened on: the production host
   see a lead can tick it as followed up or untick it; only its author can edit the words.
   The DM can delete any entry.
 - **Colors** (pin types, affiliations, travel modes): click a preset swatch, type a hex code,
-  or choose **Other color** for the browser's color picker. While that picker is open, a
-  click on the dialog's buttons only closes the picker, so it cannot save or cancel by
-  accident.
+  or choose **Custom color** for hue, saturation and lightness sliders. Everything stays inside
+  the dialog; the browser's own color picker is not used, because its separate window can
+  stay open over the dialog's Save button.
 - **NPCs:** the **NPCs** tab in the side panel lists every NPC you can see, with a filter
   by affiliation. Only the DM creates and edits them (**Add NPC** there, or **New NPC here**
   on a pin): name, status (alive, dead, missing, unknown), who can see the NPC, a
