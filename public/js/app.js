@@ -1451,12 +1451,13 @@ function closeDetail() {
   state.selectedPinId = null;
   const hadNpc = state.selectedNpcId;
   state.selectedNpcId = null;
+  const hadAff = state.selectedAffId;
   state.selectedAffId = null;
   clearSessionSelection();
   $('detail').hidden = true;
   if (had) renderPins();
-  if (hadNpc) renderNpcList();
-  if (had || hadNpc) presentItem(null);
+  if (hadNpc || hadAff) renderNpcList();
+  if (had || hadNpc || hadAff) presentItem(null);
 }
 
 function renderDetail() {
@@ -1854,6 +1855,7 @@ function openAffiliation(id) {
   if (isPhone()) setSide(false);
   renderDetail();
   renderNpcList();
+  presentItem({ kind: 'affiliation', id });
 }
 // The group: symbol, description, and the NPCs this person can see in it
 // (the DM also sees members whose link is hidden, marked "hidden link").
@@ -1876,7 +1878,8 @@ function renderAffiliationDetail(panel) {
     a.description ? h('p', { class: 'desc' }, a.description) : h('p', { class: 'muted' }, 'No description yet.'),
     isDM() ? h('div', { class: 'detail-actions' },
       h('button', { class: 'btn', type: 'button', onclick: () => editAffiliation(a) }, 'Edit affiliation'),
-      h('button', { class: 'btn', type: 'button', onclick: () => setAffiliationSymbol(a) }, a.symbol ? 'Change symbol' : 'Set symbol')) : null,
+      h('button', { class: 'btn', type: 'button', onclick: () => setAffiliationSymbol(a) }, a.symbol ? 'Change symbol' : 'Set symbol'),
+      showPlayersButton({ kind: 'affiliation', id: a.id })) : null,
     h('h3', {}, isDM() ? 'Members' : 'Known members'),
     members.length ? h('ul', { class: 'npc-list' }, members.map(({ n, link }) => npcRow(n, { hiddenLink: link.hidden })))
       : h('p', { class: 'muted' }, isDM() ? 'No NPCs have this affiliation.' : 'No one the party knows of.'),
@@ -2073,6 +2076,7 @@ function currentItem() {
   if (state.selectedPinId) return { kind: 'pin', id: state.selectedPinId };
   if (state.selectedNpcId) return { kind: 'npc', id: state.selectedNpcId };
   if (state.selectedSessionId) return { kind: 'session', id: state.selectedSessionId };
+  if (state.selectedAffId) return { kind: 'affiliation', id: state.selectedAffId };
   return null;
 }
 function playerVisible(item) {
@@ -2080,6 +2084,7 @@ function playerVisible(item) {
   if (item.kind === 'pin') return state.pins.get(item.id)?.visibility === 'public';
   if (item.kind === 'npc') return state.npcs.get(item.id)?.visibility === 'public';
   if (item.kind === 'handout') return state.handouts.get(item.id)?.visibility === 'public';
+  if (item.kind === 'affiliation') return state.affiliations.get(item.id)?.revealed === true;
   return item.kind === 'stop' || item.kind === 'session';
 }
 function writePresenter(patch) {
@@ -2155,6 +2160,7 @@ function followPresenter() {
   if (it.kind === 'pin' && state.pins.has(it.id)) openPin(it.id);
   else if (it.kind === 'npc' && state.npcs.has(it.id)) openNpc(it.id);
   else if (it.kind === 'session' && state.sessions.has(it.id)) openSession(it.id);
+  else if (it.kind === 'affiliation' && state.affiliations.has(it.id)) openAffiliation(it.id);
   else if (it.kind === 'stop') {
     const i = state.waypoints.findIndex((w) => w.id === it.id);
     if (i >= 0) state.map?.once('moveend', () => showLegPopup(i, ll(state.waypoints[i].x, state.waypoints[i].y)));

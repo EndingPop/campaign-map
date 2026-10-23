@@ -299,11 +299,12 @@ The app picks its database from the address it is opened on: the production host
   (the **PC view** badge at the top, or the account menu) asks first, with **Stay in PC view**
   as the default button.
 - **Presenter sync:** **Present** in the DM toolbar makes the DM's window send what it shows
-  (the map area and the open pin, NPC, stop, session or handout) to every window that
+  (the map area and the open pin, NPC, affiliation, stop, session or handout) to every window that
   follows it. PC view windows follow by default; any player can choose **Follow the DM's
   screen** in the account menu (useful for a remote player), and the **Following DM** chip at
   the top stops it. Only things players can see are sent: opening a hidden pin or NPC while
-  presenting leaves the other screens where they were. **Show players** on a pin, NPC, stop,
+  presenting leaves the other screens where they were (an affiliation is sent only once players
+  know the group exists, and followers see only the members players can see). **Show players** on a pin, NPC, affiliation, stop,
   session or handout sends that one thing even when Present is off.
 - **Planned routes:** **Plan a route** (under Planned routes in the side panel) draws a
   proposed path from the party's position, the same way as Add stop. Anyone can make,
