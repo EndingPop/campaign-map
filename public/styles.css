@@ -298,6 +298,14 @@ textarea { resize: vertical; min-height: 70px; }
 .hint { font-size: 13px; color: var(--mist); margin: 4px 0 0; }
 .checklist { border: 0; padding: 0; margin: 0 0 12px; }
 .checklist legend { font-size: 14px; color: var(--mist); margin-bottom: 2px; padding: 0; }
+.color-field { display: grid; gap: 8px; }
+.color-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.color-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--slate-3); padding: 0; cursor: pointer; }
+.color-swatch[aria-pressed="true"] { outline: 2px solid var(--brass); outline-offset: 2px; }
+.color-custom { display: flex; align-items: center; gap: 8px; position: relative; }
+.color-preview { width: 28px; height: 28px; border-radius: 6px; border: 2px solid var(--slate-3); flex: none; }
+.dialog input.color-hex { width: 8.5em; font-family: ui-monospace, monospace; }
+.dialog input.color-native { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; pointer-events: none; }
 .dialog-actions { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th { text-align: left; color: var(--mist); font-weight: 400; padding: 6px; border-bottom: 1px solid var(--slate-3); }

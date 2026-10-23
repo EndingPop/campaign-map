@@ -52,6 +52,52 @@ export function explainError(err) {
   return err?.message || String(err);
 }
 
+// Colors offered as swatches in color fields: each reads on the parchment,
+// forest and water of a typical fantasy map, and they differ enough from each
+// other to tell apart on a pin.
+export const COLOR_PRESETS = [
+  ['Red', '#c0392b'], ['Orange', '#e8590c'], ['Amber', '#d4a017'], ['Green', '#2e8b57'],
+  ['Teal', '#12877f'], ['Blue', '#1e5bc6'], ['Violet', '#7048e8'], ['Magenta', '#d81b8c'],
+  ['Brown', '#7a5c3a'], ['Slate', '#5b6b7a'], ['Charcoal', '#1f2a36'], ['White', '#ffffff'],
+];
+const normHex = (v) => { const m = /^#?([0-9a-f]{6})$/i.exec((v || '').trim()); return m ? `#${m[1].toLowerCase()}` : null; };
+
+// A color field: preset swatches, a hex box, and "Other color" for the
+// browser's own picker. The browser's picker is a popup that can sit over the
+// dialog's buttons, and the click that closes it can land on them; `guard`
+// is told when that popup opens and closes so the dialog can ignore that click.
+function colorField(f, id, guard) {
+  const start = normHex(f.value) || '#5b6b7a';
+  const hex = h('input', { id, type: 'text', class: 'color-hex', value: start, required: true, spellcheck: 'false',
+    pattern: '#?[0-9a-fA-F]{6}', title: 'Six hex digits, like #d81b8c', 'aria-label': `${f.label}: hex code` });
+  const preview = h('span', { class: 'color-preview', 'aria-hidden': 'true' });
+  const native = h('input', { type: 'color', class: 'color-native', value: start, tabindex: '-1', 'aria-hidden': 'true' });
+  const swatches = COLOR_PRESETS.map(([name, c]) => h('button', { type: 'button', class: 'color-swatch', 'data-color': c,
+    title: `${name} ${c}`, 'aria-label': name, style: `background:${c}`, onclick: () => set(c) }));
+  function set(c, from) {
+    const v = normHex(c);
+    if (v && from !== 'hex') hex.value = v;
+    const shown = v || normHex(hex.value) || start;
+    preview.style.background = shown;
+    if (from !== 'native') native.value = shown;
+    swatches.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.color === shown)));
+  }
+  hex.addEventListener('input', () => set(hex.value, 'hex'));
+  hex.addEventListener('blur', () => { const v = normHex(hex.value); if (v) hex.value = v; });
+  native.addEventListener('input', () => set(native.value, 'native'));
+  native.addEventListener('change', () => { set(native.value, 'native'); guard.closed(); });
+  native.addEventListener('blur', () => guard.closed());
+  const other = h('button', { type: 'button', class: 'btn small', onclick: () => {
+    guard.opened();
+    try { native.showPicker(); } catch { native.click(); }
+  } }, 'Other color');
+  set(start);
+  const wrap = h('div', { class: 'color-field' }, h('div', { class: 'color-swatches', role: 'group', 'aria-label': `${f.label}: preset colors` }, swatches),
+    h('div', { class: 'color-custom' }, preview, hex, other, native));
+  wrap.read = () => normHex(hex.value) || start;
+  return wrap;
+}
+
 // Generic form dialog. fields: [{name, label, type, value, options, required, hint, rows}]
 // Resolves to an object of values, or null if cancelled.
 // intro: content shown above the fields; extra: below them.
@@ -59,6 +105,18 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
   return new Promise((resolve) => {
     const dlg = h('dialog', { class: 'dialog' });
     const inputs = {};
+    // While a browser color picker is open, and briefly after it closes, the
+    // dialog's own buttons ignore clicks (see colorField).
+    let pickerOpen = false;
+    let ignoreUntil = 0;
+    const guard = { opened: () => { pickerOpen = true; }, closed: () => { if (pickerOpen) { pickerOpen = false; ignoreUntil = Date.now() + 400; } } };
+    dlg.addEventListener('pointerdown', () => guard.closed(), true);
+    dlg.addEventListener('click', (e) => {
+      if ((pickerOpen || Date.now() < ignoreUntil) && e.target.closest?.('.dialog-actions button')) {
+        e.preventDefault(); e.stopPropagation();
+        pickerOpen = false;
+      }
+    }, true);
     const body = fields.map((f) => {
       const id = `f-${f.name}-${Math.random().toString(36).slice(2, 7)}`;
       let input;
@@ -98,6 +156,10 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
         };
         inputs[f.name] = input;
         return h('div', { class: 'field' }, input, f.hint ? h('p', { class: 'hint' }, f.hint) : null);
+      } else if (f.type === 'color') {
+        input = colorField(f, id, guard);
+        inputs[f.name] = input;
+        return h('div', { class: 'field' }, h('label', { for: id }, f.label), input, f.hint ? h('p', { class: 'hint' }, f.hint) : null);
       } else if (f.type === 'checklist') {
         input = h('fieldset', { class: 'checklist' }, h('legend', {}, f.label),
           f.options.map((o) => h('label', { class: 'check' },
@@ -122,7 +184,7 @@ export function formDialog({ title, fields, submitLabel = 'Save', intro = null, 
         const el = inputs[f.name];
         if (f.type === 'checkbox') out[f.name] = el.checked;
         else if (f.type === 'checklist') out[f.name] = [...el.querySelectorAll('input:checked')].map((i) => i.value);
-        else if (f.type === 'links') out[f.name] = el.read();
+        else if (f.type === 'links' || f.type === 'color') out[f.name] = el.read();
         else if (f.type === 'number') out[f.name] = el.value === '' ? null : Number(el.value);
         else out[f.name] = el.value.trim();
       }

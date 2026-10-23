@@ -1793,7 +1793,7 @@ async function editNpc(npc, { pinId = null } = {}) {
         hint: 'Tick each place they are tied to. "Hidden" keeps that link from players. Links to hidden pins stay invisible to players until the pin is revealed.' },
       { name: 'affiliations', label: 'Affiliations', type: 'links', options: affOptions,
         value: { shown: npc?.affiliationIds || [], hidden: secret.hiddenAffiliationIds || [] },
-        hint: affOptions.length ? 'An affiliation shown on a visible NPC becomes known to players.' : 'No affiliations yet: add them from the menu (NPC affiliations).' },
+        hint: affOptions.length ? '"Hidden" keeps this NPC\'s membership secret; other NPCs in the same group are not affected. An affiliation shown openly on a visible NPC lets players know the group exists.' : 'No affiliations yet: add them from the menu (NPC affiliations).' },
     ],
   });
   if (!vals) return;
@@ -1829,9 +1829,10 @@ async function editAffiliation(aff) {
     fields: [
       { name: 'name', label: 'Name', value: aff?.name || '', required: true },
       { name: 'color', label: 'Color', type: 'color', value: aff?.color || '#5b6b7a' },
-      { name: 'description', label: 'Description (players see it once the affiliation is known)', type: 'textarea', value: aff?.description || '', rows: 3 },
-      { name: 'revealed', label: 'Known to players (ticked automatically when it shows on a visible NPC)', type: 'checkbox', value: aff?.revealed || false },
+      { name: 'description', label: 'Description (players see it once they know the group exists)', type: 'textarea', value: aff?.description || '', rows: 3 },
+      { name: 'revealed', label: 'Players know this group exists (ticked automatically when a visible NPC shows it openly)', type: 'checkbox', value: aff?.revealed || false },
     ],
+    extra: h('p', { class: 'hint' }, 'This shows players the group\'s name and description, not who belongs to it. Each NPC\'s membership is set in Edit NPC: tick Hidden beside the affiliation to keep it secret for that NPC.'),
   });
   if (!vals || !vals.name) return;
   const id = aff?.id || state.backend.newId('affiliations');
@@ -1850,17 +1851,17 @@ function openAffiliations() {
     const affs = [...state.affiliations.values()].sort(byName);
     body.replaceChildren(
       affs.length ? h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Players'), h('th', {}, 'NPCs'), h('th', {}, ''))),
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Players know it exists'), h('th', {}, 'NPCs'), h('th', {}, ''))),
         h('tbody', {}, affs.map((a) => h('tr', {},
           h('td', {}, h('span', { class: 'aff-dot', style: `background:${a.color}` })),
           h('td', {}, a.name, a.description ? h('div', { class: 'hint' }, a.description) : null),
-          h('td', {}, a.revealed ? 'Known' : 'Not yet'),
+          h('td', {}, a.revealed ? 'Yes' : 'Not yet'),
           h('td', {}, String(affiliationUses(a.id))),
           h('td', { style: 'text-align:right;white-space:nowrap' },
             h('button', { class: 'btn small', type: 'button', onclick: () => editAffiliation(a) }, 'Edit'), ' ',
             h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteAffiliation(a) }, 'Delete')))))) :
         h('p', { class: 'muted' }, 'No affiliations yet.'),
-      h('p', { class: 'hint' }, 'Players see an affiliation once it is a visible (not hidden) link on an NPC they can see, or when you tick "Known to players".'),
+      h('p', { class: 'hint' }, 'Players learn a group exists (its name and description) once an NPC they can see shows it openly, or when you tick "Players know this group exists". Which NPCs belong to a group is set on each NPC: in Edit NPC, tick Hidden beside an affiliation to keep that NPC\'s membership secret, and untick it when they trust the party.'),
       h('div', { class: 'detail-actions' }, h('button', { class: 'btn primary', type: 'button', onclick: () => editAffiliation(null) }, 'Add affiliation')));
   };
   render();
@@ -1910,7 +1911,7 @@ function openTravelModes() {
     const modes = sortedModes();
     body.replaceChildren(
       h('table', { class: 'table' },
-        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Miles a day'), h('th', {}, 'Players'), h('th', {}, ''))),
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Name'), h('th', {}, 'Miles a day'), h('th', {}, 'Players know it exists'), h('th', {}, ''))),
         h('tbody', {}, modes.map((m) => h('tr', {},
           h('td', {}, h('span', { class: 'swatch', html: modeSwatch(m) })),
           h('td', {}, m.label),

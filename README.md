@@ -5,7 +5,9 @@ where it is now; everyone in the group can open the map, see the places the part
 about, and add what they learned.
 
 - **Typed pins**, each with a base type (shape and color) and any number of ring types
-  (outlines), for example Town/City with a faction ring. Types are set per campaign.
+  (outlines), for example Town/City with a faction ring. Types are set per campaign. Each ring
+  has a thin white or dark edge, whichever contrasts more with its color, so light and dark
+  rings both show on the map.
 - **Hidden pins and DM-only text**, invisible to players until revealed.
 - **The party's route**, drawn as a smooth curve along the roads the DM clicks; the newest
   stop is the party's current position.
@@ -262,14 +264,21 @@ The app picks its database from the address it is opened on: the production host
   place, and **Party notes**. The form at the bottom adds a note or a lead. Anyone who can
   see a lead can tick it as followed up or untick it; only its author can edit the words.
   The DM can delete any entry.
+- **Colors** (pin types, affiliations, travel modes): click a preset swatch, type a hex code,
+  or choose **Other color** for the browser's color picker. While that picker is open, a
+  click on the dialog's buttons only closes the picker, so it cannot save or cancel by
+  accident.
 - **NPCs:** the **NPCs** tab in the side panel lists every NPC you can see, with a filter
   by affiliation. Only the DM creates and edits them (**Add NPC** there, or **New NPC here**
   on a pin): name, status (alive, dead, missing, unknown), who can see the NPC, a
   description players see, DM-only notes, places (pins), and affiliations. Each place and
-  affiliation link has its own **Hidden** box that keeps that link from players. New NPCs
-  start hidden. Everyone who can see an NPC can add party notes to it. Affiliations are
-  managed in account menu > **NPC affiliations** (name, color, description); players see one
-  once it is a visible link on an NPC they can see.
+  affiliation link has its own **Hidden** box that keeps that link from players, for that NPC
+  only: an NPC can keep their membership secret until they trust the party while others in
+  the same group show it openly. New NPCs start hidden. Everyone who can see an NPC can add
+  party notes to it. Affiliations are managed in account menu > **NPC affiliations** (name,
+  color, description). There, "Players know this group exists" decides only whether players
+  see the group's name and description; it never reveals who belongs. It is ticked
+  automatically once the group is a visible link on an NPC players can see.
 - **Upgrading from 1.0:** "Person met" entries on pins become NPCs with account menu >
   **Convert "People met" to NPCs…** (DM). Each becomes a hidden NPC linked to its pin, with
   the entry's text as a party note by its original author. Check them, merge duplicates,
