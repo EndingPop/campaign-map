@@ -429,6 +429,7 @@ check once.
 | `scripts/deploy.mjs` | Step-by-step deploy (`npm run deploy:dev`, `npm run deploy:prod`) |
 | `scripts/check-public.mjs` | Pre-push check for private data (`npm run check:public`) |
 | `.githooks/pre-push`, `scripts/install-hooks.mjs` | Run that check on every `git push`; turned on by `npm install` |
+| `CLAUDE.md`, `docs/agents/` | Settings for Claude's engineering skills: GitHub Issues as the tracker (with REST fallbacks), the triage labels, and where domain docs live |
 | `LICENSE` | MIT license |
 | `firebase.json` | Firebase tool settings |
 | `wrangler.example.jsonc`, `.firebaserc.example`, `.deploy.env.example` | Templates for this copy's Cloudflare, Firebase and deploy settings |
