@@ -388,6 +388,8 @@ describe('DM', () => {
     await assertSucceeds(deleteDoc(doc(db, 'waypoints', 'w2')));
     await assertSucceeds(setDoc(doc(db, 'pinTypes', 'giant'), { label: 'Giant sighting', kind: 'base', color: '#555' }));
     await assertFails(setDoc(doc(db, 'pinTypes', 'bad'), { label: 'Bad', kind: 'square', color: '#555' }));
+    await assertSucceeds(setDoc(doc(db, 'pinTypes', 'ring-a'), { label: 'Ring A', kind: 'ring', color: '#555', ringOrder: 1, affiliationId: 'a1' }));
+    await assertFails(setDoc(doc(db, 'pinTypes', 'ring-b'), { label: 'Ring B', kind: 'ring', color: '#555', affiliationId: 7 }));
     await assertSucceeds(setDoc(doc(db, 'pins', 'open', 'dm', 'private'), { text: 'Changed' }));
   });
   test('deletes any note, and can restore notes under their original authors', async () => {

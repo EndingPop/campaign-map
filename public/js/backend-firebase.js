@@ -88,6 +88,18 @@ export function createFirebaseBackend(config, { emulators = false, onError = con
       if (id) { await setDoc(doc(db, 'pins', id), body); return id; }
       return (await addDoc(collection(db, 'pins'), body)).id;
     },
+    // Many pins at once (import): [{ id?, data }], in batches of 400.
+    // Calls onProgress(done, total) after each batch.
+    async savePins(list, by, onProgress = () => {}) {
+      for (let i = 0; i < list.length; i += 400) {
+        const batch = writeBatch(db);
+        for (const p of list.slice(i, i + 400)) {
+          batch.set(p.id ? doc(db, 'pins', p.id) : doc(collection(db, 'pins')), { ...p.data, updatedAt: serverTimestamp(), updatedBy: by });
+        }
+        await batch.commit();
+        onProgress(Math.min(i + 400, list.length), list.length);
+      }
+    },
     async deletePin(id) {
       const batch = writeBatch(db);
       (await getDocs(collection(db, 'pins', id, 'notes'))).forEach((n) => batch.delete(n.ref));

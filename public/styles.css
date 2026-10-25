@@ -457,3 +457,17 @@ textarea { resize: vertical; min-height: 70px; }
 .img-box.viewer-img.zoomed img, .img-box.viewer-img.zoomed canvas { max-width: none; max-height: none; }
 .viewer-text { white-space: pre-wrap; background: var(--slate-2); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--serif); }
 .route-game { color: var(--fog); }
+
+/* pin import */
+.import-map { display: grid; grid-template-columns: minmax(8em, 1fr) 2fr; gap: 8px; align-items: center; margin: 6px 0; }
+.import-list { margin: 4px 0 8px; padding-left: 20px; font-size: 14px; max-height: 14em; overflow: auto; }
+
+/* image picker gallery */
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; max-height: 15em; overflow: auto; }
+.gallery:empty { display: none; }
+.gallery-item { display: grid; gap: 4px; justify-items: center; padding: 6px 4px; background: var(--slate-2); border: 2px solid var(--slate-3); border-radius: var(--radius-sm); cursor: pointer; color: inherit; font: inherit; }
+.gallery-item[aria-pressed="true"] { border-color: var(--brass); }
+.gallery-label { font-size: 11px; color: var(--mist); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.badge-btn { cursor: pointer; font: inherit; color: inherit; }
+.badge-btn:hover { text-decoration: underline; }

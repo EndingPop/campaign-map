@@ -48,7 +48,9 @@ service cloud.firestore {
       allow create, update: if isDM()
         && isShortString(request.resource.data.label, 60)
         && request.resource.data.kind in ['base', 'ring']
-        && isShortString(request.resource.data.color, 30);
+        && isShortString(request.resource.data.color, 30)
+        // `affiliationId` (optional, rings): the NPC affiliation this ring stands for.
+        && isOptString(request.resource.data.get('affiliationId', null), 60);
     }
 
     match /pins/{pinId} {

@@ -36,7 +36,7 @@ export function createDemoBackend(roleParam) {
       'player2@example.com': { role: 'player', displayName: 'Second Player', characterName: 'Oskar' },
     },
     settings: { ...DEFAULT_MAP },
-    pinTypes: Object.fromEntries(STARTING_PIN_TYPES.map(({ id, ...t }) => [id, t])),
+    pinTypes: Object.fromEntries(STARTING_PIN_TYPES.map(({ id, ...t }) => [id, id === RING_A ? { ...t, affiliationId: 'lantern' } : t])),
     pins: {
       p1: { name: 'First Town', x: 1450, y: 1050, baseType: 'city', rings: [], visibility: 'public', description: 'Where the party met.' },
       p2: { name: 'Ridgeford', x: 1650, y: 900, baseType: 'city', rings: [RING_A].filter(Boolean), visibility: 'public', description: '' },
@@ -180,6 +180,12 @@ export function createDemoBackend(roleParam) {
       data.pins[pid] = { ...clone(pin), updatedAt: new Date(), updatedBy: by };
       emit();
       return pid;
+    },
+    async savePins(list, by, onProgress = () => {}) {
+      guard(isDM(), 'edit pins');
+      for (const p of list) data.pins[p.id || newId()] = { ...clone(p.data), updatedAt: new Date(), updatedBy: by };
+      emit();
+      onProgress(list.length, list.length);
     },
     async deletePin(id) {
       guard(isDM(), 'delete pins');

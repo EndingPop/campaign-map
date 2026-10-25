@@ -5,6 +5,7 @@ import { h, toast, explainError, formDialog, confirmDialog, panelDialog, formatD
 import { pinSvg, typeSwatch, partySvg, PARTY_SIZE } from './markers.js';
 import { routeSegments, smoothPath, pathLength, legPixels, legPoints, modeIdOf, arcPoints } from './route.js';
 import { parseBackup, summarize } from './restore.js';
+import { readPinRows, planPinImport } from './importpins.js';
 
 const L = window.L;
 const env = detectEnv();
@@ -224,7 +225,7 @@ function enterApp(roleChanged) {
     b.watchAffiliations(isDM(), (list) => {
       state.affiliations = new Map(list.map((a) => [a.id, a]));
       syncReveals();
-      renderNpcList(); renderDetail(); refreshDialogs();
+      renderNpcList(); renderFilters(); renderDetail(); refreshDialogs();
     }),
     b.watchNpcs(isDM(), (list) => {
       state.npcs = new Map(list.map((n) => [n.id, n]));
@@ -282,7 +283,7 @@ function renderChrome() {
   const items = [];
   if (inPcView()) items.push(['Leave PC view…', leavePcView]);
   if (!isDM()) items.push([state.followDM ? 'Stop following the DM\'s screen' : 'Follow the DM\'s screen', () => setFollow(!state.followDM)]);
-  if (isDM()) items.push(['Pin types', openPinTypes], ['Travel modes', openTravelModes], ['NPC affiliations', openAffiliations], ['Convert "People met" to NPCs…', convertPeopleMet]);
+  if (isDM()) items.push(['Pin types', openPinTypes], ['Travel modes', openTravelModes], ['NPC affiliations', openAffiliations], ['Import pins from CSV…', importPins], ['Convert "People met" to NPCs…', convertPeopleMet]);
   if (isAdmin()) items.push(['Members', openMembers], ['Map settings', openMapSettings], ['In-game time…', openTimeSettings], ['Download backup (JSON)', exportBackup], ['Restore from backup…', restoreBackup]);
   if (env === 'demo') {
     items.push(['sep']);
@@ -503,6 +504,9 @@ function setupMap() {
   renderPins(); renderRoute(); renderParty(); renderPlans();
 }
 
+// The NPC affiliation a ring type is linked to, if this person can read it
+// (players get only affiliations they know exist).
+const ringAffiliation = (t) => (t?.kind === 'ring' && t.affiliationId ? state.affiliations.get(t.affiliationId) || null : null);
 function typesOf(pin) {
   const base = state.pinTypes.get(pin.baseType);
   const rings = (pin.rings || []).map((id) => state.pinTypes.get(id)).filter(Boolean)
@@ -693,6 +697,7 @@ function renderFilters() {
       renderPins();
     } }),
     h('span', { class: 'swatch', html: typeSwatch(t) }),
+    ringAffiliation(t)?.symbol ? affMark(ringAffiliation(t)) : null,
     h('span', {}, t.label),
     h('span', { class: 'muted', style: 'margin-left:auto;color:var(--mist);font-size:13px' }, String(counts.get(t.id) || 0)));
 
@@ -1471,7 +1476,12 @@ function renderDetail() {
   const visits = state.waypoints.filter((w) => w.pinId === pin.id);
   const myEmail = state.user.email;
 
-  const badge = (t) => h('span', { class: 'badge' }, h('span', { class: 'swatch', html: typeSwatch(t) }), t.label);
+  const badge = (t) => {
+    const aff = ringAffiliation(t);
+    if (!aff) return h('span', { class: 'badge' }, h('span', { class: 'swatch', html: typeSwatch(t) }), t.label);
+    return h('button', { type: 'button', class: 'badge badge-btn', title: `About ${aff.name}`, onclick: () => openAffiliation(aff.id) },
+      h('span', { class: 'swatch', html: typeSwatch(t) }), aff.symbol ? affMark(aff) : null, t.label);
+  };
   const meta = (n) => {
     const mine = n.authorEmail === myEmail;
     const edited = n.updatedAt && n.createdAt && noteTime({ createdAt: n.updatedAt }) - noteTime(n) > 60000;
@@ -1828,7 +1838,7 @@ async function deleteNpc(npc) {
   closeDetail();
   await deleteHandoutsOf('npc', npc.id);
   await attempt(() => state.backend.deleteNpc(npc.id), 'NPC deleted.');
-  if (npc.portrait?.imageId) attempt(() => state.backend.deleteImage(npc.portrait.imageId));
+  if (npc.portrait?.imageId) releaseImage(npc.portrait.imageId, { kind: 'npc', id: npc.id });
 }
 
 // ---------- affiliation view (everyone) ----------
@@ -1880,11 +1890,22 @@ function renderAffiliationDetail(panel) {
       h('button', { class: 'btn', type: 'button', onclick: () => editAffiliation(a) }, 'Edit affiliation'),
       h('button', { class: 'btn', type: 'button', onclick: () => setAffiliationSymbol(a) }, a.symbol ? 'Change symbol' : 'Set symbol'),
       showPlayersButton({ kind: 'affiliation', id: a.id })) : null,
+    ...affiliationPlaces(a),
     h('h3', {}, isDM() ? 'Members' : 'Known members'),
     members.length ? h('ul', { class: 'npc-list' }, members.map(({ n, link }) => npcRow(n, { hiddenLink: link.hidden })))
       : h('p', { class: 'muted' }, isDM() ? 'No NPCs have this affiliation.' : 'No one the party knows of.'),
   ].filter(Boolean));
   panel.hidden = false;
+}
+// Pins carrying a ring linked to this affiliation (players have only the pins they can see).
+function affiliationPlaces(a) {
+  const ringIds = [...state.pinTypes.values()].filter((t) => ringAffiliation(t)?.id === a.id).map((t) => t.id);
+  if (!ringIds.length) return [];
+  const pins = [...state.pins.values()].filter((p) => (p.rings || []).some((r) => ringIds.includes(r))).sort(byName);
+  return [h('h3', {}, 'Places'), pins.length ? h('ul', { class: 'npc-links' }, pins.map((pin) => h('li', {},
+    h('button', { class: 'npc-row', type: 'button', onclick: () => showPinFromSearch(pin.id) },
+      h('span', { class: 'npc-row-name' }, pin.name, pin.visibility === 'hidden' ? h('span', { class: 'search-hidden' }, 'hidden pin') : null)))))
+    : h('p', { class: 'muted' }, 'No places with this ring.')];
 }
 async function setAffiliationSymbol(a) {
   const r = await pickImage({ title: `Symbol of ${a.name}`, aspect: 1, current: a.symbol });
@@ -1892,7 +1913,7 @@ async function setAffiliationSymbol(a) {
   const symbol = r.remove ? null : r;
   const saved = await attempt(() => state.backend.saveAffiliation(a.id, { ...affFields(a), symbol }).then(() => true), r.remove ? 'Symbol removed.' : 'Symbol saved.');
   const old = a.symbol?.imageId;
-  if (saved && old && old !== symbol?.imageId) attempt(() => state.backend.deleteImage(old));
+  if (saved && old && old !== symbol?.imageId) releaseImage(old, { kind: 'affiliation', id: a.id });
 }
 const affFields = (a) => ({ name: a.name, color: a.color, description: a.description || '', revealed: !!a.revealed, symbol: a.symbol || null });
 
@@ -1922,8 +1943,14 @@ async function deleteAffiliation(aff) {
   const msg = used ? `"${aff.name}" is on ${used} NPC${used === 1 ? '' : 's'}; it disappears from them. Delete it?` : `Delete the affiliation "${aff.name}"?`;
   if (!(await confirmDialog(msg, 'Delete'))) return;
   if (state.selectedAffId === aff.id) closeDetail();
+  for (const t of state.pinTypes.values()) {
+    if (t.affiliationId === aff.id) {
+      const { id, affiliationId, ...rest } = t;
+      await attempt(() => state.backend.savePinType(id, rest));
+    }
+  }
   const done = await attempt(() => state.backend.deleteAffiliation(aff.id).then(() => true), 'Affiliation deleted.');
-  if (done && aff.symbol?.imageId) attempt(() => state.backend.deleteImage(aff.symbol.imageId));
+  if (done && aff.symbol?.imageId) releaseImage(aff.symbol.imageId, { kind: 'affiliation', id: aff.id });
 }
 function openAffiliations() {
   const body = h('div');
@@ -2560,6 +2587,25 @@ function encodeImage(img, c, maxW, maxH) {
   throw new Error('That image is too detailed to store even when shrunk. Try a smaller crop.');
 }
 
+// Every image in use: stored ones by id and web addresses, with what uses them.
+// [{ ref, owner: { kind, id }, label }]
+function imageUses() {
+  const out = [];
+  for (const n of state.npcs.values()) if (n.portrait) out.push({ ref: n.portrait, owner: { kind: 'npc', id: n.id }, label: `Portrait: ${n.name}` });
+  for (const a of state.affiliations.values()) if (a.symbol) out.push({ ref: a.symbol, owner: { kind: 'affiliation', id: a.id }, label: `Symbol: ${a.name}` });
+  for (const x of state.handouts.values()) {
+    const ref = handoutRef(x);
+    if (ref) out.push({ ref, owner: { kind: 'handout', id: x.id }, label: `Handout: ${x.title}` });
+  }
+  return out;
+}
+// A stored image can be shared (see the gallery in pickImage), so it is
+// deleted only when nothing other than `owner` still uses it.
+function releaseImage(id, owner) {
+  const used = imageUses().some((u) => u.ref.imageId === id && !(u.owner.kind === owner.kind && u.owner.id === owner.id));
+  if (!used) attempt(() => state.backend.deleteImage(id));
+}
+
 // Choose an image: upload a file or link an address, then pan and zoom it in
 // the frame. aspect 1 = square (portraits); null keeps the image's shape.
 // Resolves to { imageId } | { url, crop } | { remove: true } | null.
@@ -2577,6 +2623,23 @@ function pickImage({ title, aspect = null, current = null }) {
     const urlInput = h('input', { type: 'url', placeholder: 'https://example.com/picture.png', 'aria-label': 'Image address' });
     const copyBox = h('input', { type: 'checkbox' });
     const saveBtn = h('button', { type: 'button', class: 'btn primary', disabled: true }, 'Save image');
+    let storedId = null;
+    // Images already in the campaign, each once (stored ones by id, web ones by address).
+    const gallery = h('div', { class: 'gallery' });
+    const galleryBtn = h('button', { type: 'button', class: 'btn', onclick: () => {
+      const seen = new Set();
+      const items = imageUses().filter((u) => { const k = u.ref.imageId || u.ref.url; if (!k || seen.has(k)) return false; seen.add(k); return true; });
+      galleryBtn.hidden = true;
+      gallery.replaceChildren(...(items.length ? items.map((u) => h('button', { type: 'button', class: 'gallery-item', title: u.label, 'aria-label': u.label,
+        onclick: (e) => {
+          gallery.querySelectorAll('.gallery-item').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+          e.currentTarget.setAttribute('aria-pressed', 'true');
+          if (u.ref.imageId) {
+            imageData(u.ref.imageId).then((src) => { if (src) { storedId = u.ref.imageId; urlInput.value = ''; load(src, 'stored'); } else status.textContent = 'That image could not be loaded.'; });
+          } else { storedId = null; urlInput.value = u.ref.url; load(u.ref.url, 'url', u.ref.crop); }
+        } }, imageEl(u.ref, 'thumb'), h('span', { class: 'gallery-label' }, u.label)))
+        : [h('p', { class: 'muted' }, 'No images saved yet.')]));
+    } }, 'Show saved images');
     const scale = () => s0 * z;
     const clamp = () => {
       ox = Math.min(0, Math.max(fw - nw * scale(), ox));
@@ -2626,8 +2689,8 @@ function pickImage({ title, aspect = null, current = null }) {
       i.onerror = () => { status.textContent = kind === 'url' ? 'That address did not load as an image. Check it opens in a new tab, and that the site allows embedding.' : 'That file is not an image this browser can open.'; };
       i.src = src;
     };
-    fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) load(URL.createObjectURL(f), 'file'); });
-    const loadUrl = () => { const u = urlInput.value.trim(); if (/^https?:\/\//i.test(u)) load(u, 'url'); else status.textContent = 'Enter an address starting with https://'; };
+    fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) { storedId = null; load(URL.createObjectURL(f), 'file'); } });
+    const loadUrl = () => { const u = urlInput.value.trim(); storedId = null; if (/^https?:\/\//i.test(u)) load(u, 'url'); else status.textContent = 'Enter an address starting with https://'; };
     urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); loadUrl(); } });
     zoom.addEventListener('input', () => setZoom(Number(zoom.value)));
     frame.addEventListener('wheel', (e) => { if (!img) return; e.preventDefault(); setZoom(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); }, { passive: false });
@@ -2652,6 +2715,10 @@ function pickImage({ title, aspect = null, current = null }) {
     saveBtn.addEventListener('click', async () => {
       if (!img) return;
       if (source === 'url' && !copyBox.checked) { close({ url: urlInput.value.trim(), crop: crop() }); return; }
+      // A saved image used whole is shared, not copied; a new crop of it is
+      // stored as a new image.
+      const c = crop();
+      if (source === 'stored' && c.w >= 0.995 && c.h >= 0.995) { close({ imageId: storedId }); return; }
       saveBtn.disabled = true;
       saveBtn.textContent = 'Saving…';
       try {
@@ -2661,7 +2728,7 @@ function pickImage({ title, aspect = null, current = null }) {
         }
         let out;
         try {
-          out = aspect ? encodeImage(src, crop(), 512, 512 / aspect) : encodeImage(src, crop(), 2000, 2000);
+          out = aspect ? encodeImage(src, c, 512, 512 / aspect) : encodeImage(src, c, 2000, 2000);
         } catch (err) {
           if (err?.name === 'SecurityError') throw new Error(NO_COPY);
           throw err;
@@ -2684,6 +2751,7 @@ function pickImage({ title, aspect = null, current = null }) {
         h('div', { class: 'add-row' }, urlInput, h('button', { type: 'button', class: 'btn', onclick: loadUrl }, 'Load')),
         h('label', { class: 'check' }, copyBox, 'Store a copy with the map (keeps working if the original disappears; only works if that site allows copying)'),
         h('p', { class: 'hint' }, 'Unticked, only the address is saved: anyone with it can open the image, and it breaks if the site removes it.')),
+      h('div', { class: 'field' }, h('label', {}, 'Or reuse an image already in this campaign'), galleryBtn, gallery),
       h('div', { class: 'crop-wrap' }, frame),
       h('label', { class: 'crop-zoom' }, 'Zoom ', zoom),
       status,
@@ -2709,7 +2777,7 @@ async function setPortrait(npc) {
   const portrait = r.remove ? null : r;
   const saved = await attempt(() => state.backend.saveNpc(npc.id, { ...npcFields(npc), portrait }, npcSecret(npc.id), state.user.email), r.remove ? 'Portrait removed.' : 'Portrait saved.');
   const old = npc.portrait?.imageId;
-  if (saved && old && old !== portrait?.imageId) attempt(() => state.backend.deleteImage(old));
+  if (saved && old && old !== portrait?.imageId) releaseImage(old, { kind: 'npc', id: npc.id });
 }
 
 // ---------- handouts ----------
@@ -2777,19 +2845,19 @@ async function editHandout(x, parentKind, parentId) {
     visibility: vals.revealed && handoutParentVisible(draft) ? 'public' : 'hidden', ...image };
   if (x?.createdAt) data.createdAt = x.createdAt;
   const id = await attempt(() => state.backend.saveHandout(x?.id || null, data), x ? 'Handout saved.' : 'Handout added.');
-  if (id && x?.imageId && x.imageId !== image.imageId) attempt(() => state.backend.deleteImage(x.imageId));
+  if (id && x?.imageId && x.imageId !== image.imageId) releaseImage(x.imageId, { kind: 'handout', id: x.id });
 }
 async function deleteHandout(x) {
   if (!(await confirmDialog(`Delete the handout "${x.title}"? This cannot be undone.`, 'Delete handout'))) return;
   closeViewer(true);
   await attempt(() => state.backend.deleteHandout(x.id), 'Handout deleted.');
-  if (x.imageId) attempt(() => state.backend.deleteImage(x.imageId));
+  if (x.imageId) releaseImage(x.imageId, { kind: 'handout', id: x.id });
 }
 // Deleting a pin or NPC also deletes its handouts (and their images).
 async function deleteHandoutsOf(kind, id) {
   for (const x of handoutsFor(kind, id)) {
     await attempt(() => state.backend.deleteHandout(x.id));
-    if (x.imageId) await attempt(() => state.backend.deleteImage(x.imageId));
+    if (x.imageId) releaseImage(x.imageId, { kind: 'handout', id: x.id });
   }
 }
 
@@ -3084,6 +3152,9 @@ async function editPinType(type) {
       { name: 'shape', label: 'Shape (pin shapes only)', type: 'select', value: type?.shape || 'circle',
         options: ['circle', 'diamond', 'square', 'triangle'].map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) })) },
       { name: 'ringOrder', label: 'Ring position (rings only, 1 = innermost)', type: 'number', value: type?.ringOrder ?? 1 },
+      { name: 'affiliationId', label: 'NPC affiliation (rings only)', type: 'select', value: type?.affiliationId || '',
+        options: [{ value: '', label: 'None' }, ...[...state.affiliations.values()].sort(byName).map((a) => ({ value: a.id, label: a.name }))],
+        hint: 'Link a ring to the same group in NPC affiliations: the ring then shows that group\'s symbol and opens its page. Players see the link only once they know the group exists.' },
       { name: 'sortOrder', label: 'Order in the legend', type: 'number', value: type?.sortOrder ?? (state.pinTypes.size + 1) },
     ],
   });
@@ -3091,7 +3162,8 @@ async function editPinType(type) {
   let id = type?.id || slugify(vals.label);
   if (!type) { const stem = id; let n = 2; while (state.pinTypes.has(id)) id = `${stem}-${n++}`; }
   const data = { label: vals.label, kind: vals.kind, color: vals.color, sortOrder: vals.sortOrder ?? 99 };
-  if (vals.kind === 'base') data.shape = vals.shape; else data.ringOrder = vals.ringOrder ?? 1;
+  if (vals.kind === 'base') data.shape = vals.shape;
+  else { data.ringOrder = vals.ringOrder ?? 1; if (vals.affiliationId) data.affiliationId = vals.affiliationId; }
   await attempt(() => state.backend.savePinType(id, data), type ? 'Pin type saved.' : 'Pin type added.');
 }
 
@@ -3114,7 +3186,8 @@ function openPinTypes() {
         h('tbody', {}, types.map((t) => h('tr', {},
           h('td', {}, h('span', { class: 'swatch', html: typeSwatch(t) })),
           h('td', {}, t.label),
-          h('td', {}, t.kind === 'ring' ? `Ring ${t.ringOrder ?? ''}` : `${t.shape || 'circle'}`),
+          h('td', {}, t.kind === 'ring' ? `Ring ${t.ringOrder ?? ''}` : `${t.shape || 'circle'}`,
+            ringAffiliation(t) ? h('div', { class: 'hint' }, `Linked to ${ringAffiliation(t).name}`) : null),
           h('td', { style: 'text-align:right;white-space:nowrap' },
             h('button', { class: 'btn small', type: 'button', onclick: () => editPinType(t) }, 'Edit'), ' ',
             h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePinType(t) }, 'Delete')))))) :
@@ -3299,6 +3372,79 @@ async function restoreBackup() {
     reportError(err);
     toast('The restore stopped part-way. Run it again with the same file to finish, or restore the "before-restore" copy to go back.', 'error');
   }
+}
+
+// ---------- pin import (DM) ----------
+// Adds pins from a CSV file (see importpins.js for the columns) without
+// touching anything else. The dialog previews the result and replans as the
+// DM changes the options; nothing is written until Import.
+async function importPins() {
+  const file = await pickFile('.csv,text/csv');
+  if (!file) return;
+  let rows;
+  try { rows = readPinRows(await file.text()); } catch (err) { toast(err.message, 'error'); return; }
+  const bases = [...state.pinTypes.values()].filter((t) => t.kind === 'base');
+  const size = { width: Number(state.settings.imageWidth) || DEFAULT_MAP.imageWidth, height: Number(state.settings.imageHeight) || DEFAULT_MAP.imageHeight };
+  const ctx = { pins: [...state.pins.values()], pinTypes: [...state.pinTypes.values()], size };
+  const options = { onMatch: 'skip', typeMap: {} };
+  const firstUnknown = planPinImport(rows, ctx, options).unknownTypes;
+
+  const dlg = h('dialog', { class: 'dialog wide' });
+  const body = h('div');
+  const importBtn = h('button', { type: 'button', class: 'btn primary' }, 'Import');
+  let plan;
+  const close = () => { dlg.close(); dlg.remove(); };
+  const list = (items, max = 12) => h('ul', { class: 'import-list' },
+    items.slice(0, max).map((t) => h('li', {}, t)), items.length > max ? h('li', { class: 'muted' }, `and ${items.length - max} more`) : null);
+  const render = () => {
+    plan = planPinImport(rows, ctx, options);
+    const typeSelects = firstUnknown.map((v) => h('label', { class: 'import-map' }, h('span', {}, `Type "${v}"`),
+      h('select', { onchange: (e) => { if (e.target.value) options.typeMap[v] = e.target.value; else delete options.typeMap[v]; render(); } },
+        h('option', { value: '' }, 'Skip these rows'),
+        bases.map((b) => h('option', { value: b.id, selected: options.typeMap[v] === b.id }, b.label)))));
+    const unmapped = rows.filter((r) => plan.unknownTypes.includes(r.type)).length;
+    const shown = plan.add.filter((a) => a.data.visibility === 'public').length;
+    body.replaceChildren(...[
+      h('p', {}, `File: ${file.name}, ${rows.length} row${rows.length === 1 ? '' : 's'}.`),
+      h('table', { class: 'table' },
+        h('tr', {}, h('th', {}, 'New pins'), h('td', {}, `${plan.add.length}${plan.add.length ? ` (${shown} visible to players, ${plan.add.length - shown} hidden)` : ''}`)),
+        h('tr', {}, h('th', {}, 'Same name as a pin already on the map'), h('td', {}, String(plan.skip.length + plan.update.length))),
+        h('tr', {}, h('th', {}, 'Rows with problems (not imported)'), h('td', {}, String(plan.errors.length + unmapped)))),
+      plan.skip.length + plan.update.length ? h('label', { class: 'import-map' }, h('span', {}, 'Pins with the same name'),
+        h('select', { onchange: (e) => { options.onMatch = e.target.value; render(); } },
+          h('option', { value: 'skip', selected: options.onMatch === 'skip' }, 'Leave them as they are'),
+          h('option', { value: 'update', selected: options.onMatch === 'update' }, 'Move them and set their type from the file'))) : null,
+      typeSelects.length ? h('div', {}, h('h3', {}, 'Types not on this map'),
+        h('p', { class: 'hint' }, 'Choose an existing base type for each, or skip those rows. To keep a type, add it in Pin types first and import again.'), typeSelects) : null,
+      plan.errors.length ? h('div', {}, h('h3', {}, 'Problems'), list(plan.errors.map((e) => `Line ${e.line}: ${e.message}`))) : null,
+      plan.skip.length + plan.update.length ? h('div', {}, h('h3', {}, options.onMatch === 'update' ? 'Will be updated' : 'Left as they are'),
+        list([...plan.skip.map((s) => s.name), ...plan.update.map((u) => u.data.name)])) : null,
+      h('p', { class: 'hint' }, 'Nothing else changes. A copy of the current data downloads before the import, so it can be undone with Restore from backup.'),
+    ].filter(Boolean));
+    const n = plan.add.length + plan.update.length;
+    importBtn.disabled = !n;
+    importBtn.textContent = n ? `Import ${n} pin${n === 1 ? '' : 's'}` : 'Nothing to import';
+  };
+  importBtn.addEventListener('click', async () => {
+    const writes = [...plan.add.map((a) => ({ data: a.data })), ...plan.update.map((u) => ({ id: u.id, data: u.data }))];
+    close();
+    try {
+      toast('Saving a copy of the current data…');
+      downloadJson(await state.backend.exportAll(), `${fileSlug()}-before-import-${backupProjectTag()}-${todayIso()}.json`);
+      await state.backend.savePins(writes, state.user.email, (done, total) => toast(`Importing… ${done} of ${total}`));
+      resetSearch();
+      toast(`Imported: ${plan.add.length} added${plan.update.length ? `, ${plan.update.length} updated` : ''}. The copy from before the import was downloaded.`, 'ok');
+    } catch (err) {
+      reportError(err);
+      toast('The import stopped part-way. Pins already written stay; importing the same file again with "Leave them as they are" adds the rest.', 'error');
+    }
+  });
+  dlg.append(h('h2', {}, 'Import pins'), body, h('div', { class: 'dialog-actions' }, h('span', { class: 'spacer' }),
+    h('button', { type: 'button', class: 'btn', onclick: close }, 'Cancel'), importBtn));
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  document.body.append(dlg);
+  render();
+  dlg.showModal();
 }
 
 // Dialogs that list live data redraw when that data changes.

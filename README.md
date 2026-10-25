@@ -153,7 +153,7 @@ With the emulators **stopped** (Ctrl+C in terminal 1):
 ```
 npm run test:rules
 ```
-This starts the Firestore emulator, runs 48 tests covering 187 allowed or refused actions
+This starts the Firestore emulator, runs 48 tests covering 189 allowed or refused actions
 across the roles (for example "a player cannot read a hidden pin" and "a player cannot
 edit someone else's note"), and stops the emulator. Every test should report `ok`. Run
 this after any change to `firestore.rules`.
@@ -286,7 +286,12 @@ The app picks its database from the address it is opened on: the production host
   appears when the NPCs tab is filtered to one group, opens the group's page: symbol,
   description, and the members you can see (players see only NPCs whose membership is not
   hidden; the DM sees all, with hidden ones marked). Deleting an affiliation also deletes its
-  stored symbol.
+  stored symbol, unless something else still uses it.
+- **Rings linked to affiliations:** in Pin types, a ring type can name an NPC affiliation
+  (**NPC affiliation**). The ring then shows that group's symbol in the legend and on a pin's
+  page, where it opens the group's page, and the group's page lists the places with that ring.
+  Players see the link only once they know the group exists. A group can have a ring, NPCs, or
+  both; deleting the affiliation leaves the ring type in place, unlinked.
 - **Upgrading from 1.0:** "Person met" entries on pins become NPCs with account menu >
   **Convert "People met" to NPCs…** (DM). Each becomes a hidden NPC linked to its pin, with
   the entry's text as a party note by its original author. Check them, merge duplicates,
@@ -324,7 +329,10 @@ The app picks its database from the address it is opened on: the production host
   anyone with the address can open it, and it breaks if the site removes it) unless you
   tick **Store a copy**, which stores it like an upload. Copying only works when that site
   allows other pages to copy its images (CORS); if it does not, the dialog says so and you
-  can save it as a link or download and upload it instead. Drag and zoom to crop. A handout has a title, an optional transcription (searchable) and its own
+  can save it as a link or download and upload it instead. **Show saved images** lists the
+  portraits, symbols and handout images already in the campaign to reuse one; used whole, a
+  stored image is shared rather than copied (and deleted only when nothing uses it any more),
+  and a new crop of it is stored as a new image. Drag and zoom to crop. A handout has a title, an optional transcription (searchable) and its own
   "players can see it" switch; players see it only when that is on and its pin or NPC is
   visible. Clicking a handout opens it full screen.
 - **In-game time (admin or DM):** account menu > **In-game time…** picks one scheme for the
@@ -354,6 +362,15 @@ The app picks its database from the address it is opened on: the production host
   keep a few, and never commit them (they hold DM-only text and members' emails;
   `.gitignore` excludes them). Uploaded images are in the file too, so it grows with them:
   tens of kilobytes per portrait, a few hundred per handout.
+- **Importing pins (DM):** account menu > **Import pins from CSV…** adds pins from a
+  spreadsheet without touching anything else. The first line names the columns: `name`, `x`,
+  `y` (required; the map's coordinate grid, the width and height in Map settings), `type` (a
+  base pin type's name or id; the first base type if empty), `rings` (ring type names or ids,
+  separated by `;`), `description`, and `visibility` (`hidden`, the default, or `public`).
+  Other columns are ignored. The dialog previews the import: new pins, rows whose name matches
+  a pin already on the map (left alone, or moved and retyped if you choose), types the map
+  does not have (pick an existing type for each, or skip those rows) and rows with problems,
+  with line numbers. A `…-before-import-….json` copy of the current data downloads first.
 - **Restoring:** account menu > **Restore from backup…** (admin or DM). Pick a backup file;
   the dialog shows when it was saved, which project it came from and what it holds. Restoring
   makes the map match the file: anything added since is deleted, and changed entries go back.
@@ -418,12 +435,13 @@ check once.
 | `public/js/route.js` | Route geometry: travel-mode segments, curve smoothing, leg lengths |
 | `public/js/calendar.js` | In-game calendars: presets and date math |
 | `public/js/restore.js` | Checks a backup file and plans the writes that restore it |
+| `public/js/importpins.js` | Reads a pin CSV and plans the import |
 | `public/js/ui.js` | Dialogs, messages and small helpers |
 | `public/vendor/` | Leaflet 1.9.4 and Firebase JS SDK 13.0.0, bundled; rebuild with `npm run vendor` |
 | `public/map/example-map.png` | Placeholder map for demo mode; your own map goes beside it (not committed) |
 | `firestore.rules` | Security rules |
 | `tests/rules.test.mjs` | Security rules tests (`npm run test:rules`) |
-| `tests/unit/` | Calendar and restore tests (`npm run test:unit`) |
+| `tests/unit/` | Calendar, restore and pin import tests (`npm run test:unit`) |
 | `scripts/seed.mjs` | Test data for the local emulator only |
 | `scripts/serve.mjs` | Local web server |
 | `scripts/deploy.mjs` | Step-by-step deploy (`npm run deploy:dev`, `npm run deploy:prod`) |
