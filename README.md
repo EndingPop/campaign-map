@@ -401,7 +401,8 @@ the check yourself:
 npm run check:public
 ```
 It lists exactly the files git would publish and fails if any of them is one of your
-private settings files, a map image other than the example, or a backup, or contains a
+private settings files (including Claude Code's `.claude/settings.local.json`, which
+saves approved commands word for word), a map image other than the example, or a backup, or contains a
 value read from your private files (domain, Firebase project ids and keys, Worker name,
 deploy addresses) or a real-looking email address. It reads those values from your
 private files when it runs, so the check itself publishes nothing. It checks your folder

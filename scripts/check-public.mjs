@@ -30,7 +30,7 @@ const fix = (f) => (staged.has(f) ? `; it is already staged, so .gitignore does 
 
 // 1. Files that must never be published.
 // Matched by ending, so a stray nested copy of the project is caught too.
-const PRIVATE_FILES = ['public/js/site-config.js', 'wrangler.jsonc', '.firebaserc', '.deploy.env'];
+const PRIVATE_FILES = ['public/js/site-config.js', 'wrangler.jsonc', '.firebaserc', '.deploy.env', '.claude/settings.local.json'];
 const isPrivate = (f) => PRIVATE_FILES.some((p) => f === p || f.endsWith(`/${p}`));
 for (const f of files) {
   if (isPrivate(f)) problems.push(`${f}: private settings file would be published${fix(f)}`);
